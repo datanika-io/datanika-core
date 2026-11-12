@@ -71,6 +71,52 @@ pydantic==2.9.2
         pins = probe.parse_pins("--some-future-flag\nanyio==4.4.0\n???\n")
         assert pins == {"anyio": "4.4.0"}
 
+    def test_a_marker_split_uses_the_image_interpreter(self):
+        """uv export emits both forks. Last-writer-wins reports the >=3.14 pin.
+
+        image-probe on 471b8c1 compared a Python 3.12 image (grpcio 1.78.0,
+        grpcio-status 1.62.3) to the 3.14 pins (both 1.85.1). Those image
+        versions are the lock's own <3.14 pins. The fork that does not apply
+        to the image is not drift, and the one that does still is.
+        """
+        text = """\
+grpcio==1.78.0 ; python_full_version < '3.14'
+grpcio==1.85.1 ; python_full_version >= '3.14'
+grpcio-status==1.62.3 ; python_full_version < '3.14'
+grpcio-status==1.85.1 ; python_full_version >= '3.14'
+anyio==4.4.0
+httpx==0.27.2 ; python_full_version >= '3.8'
+"""
+        py312 = {"python_full_version": "3.12.12"}
+        locked = probe.parse_pins(text, environment=py312)
+        assert locked["grpcio"] == "1.78.0"
+        assert locked["grpcio-status"] == "1.62.3"
+        assert locked["anyio"] == "4.4.0"
+        assert locked["httpx"] == "0.27.2"
+        installed = {"grpcio": "1.78.0", "grpcio-status": "1.62.3", "anyio": "4.4.0"}
+        assert probe.pin_drift(locked, installed) == []
+
+        mismatched = {"grpcio": "1.85.1", "grpcio-status": "1.62.3", "anyio": "4.4.0"}
+        assert probe.pin_drift(locked, mismatched) == [("grpcio", "1.78.0", "1.85.1")]
+
+        py314 = {"python_full_version": "3.14.0"}
+        locked_314 = probe.parse_pins(text, environment=py314)
+        assert locked_314["grpcio"] == "1.85.1"
+        assert locked_314["grpcio-status"] == "1.85.1"
+        assert probe.pin_drift(locked_314, installed) == [
+            ("grpcio", "1.85.1", "1.78.0"),
+            ("grpcio-status", "1.85.1", "1.62.3"),
+        ]
+        assert "python_full_version" in probe._INSTALLED_SNIPPET
+        assert probe.marker_matches(
+            "python_full_version < '3.14' and sys_platform == 'linux'",
+            {"python_full_version": "3.12.12", "sys_platform": "linux"},
+        )
+        assert not probe.marker_matches(
+            "python_full_version >= '3.14' or sys_platform == 'win32'",
+            {"python_full_version": "3.12.12", "sys_platform": "linux"},
+        )
+
 
 class TestPinDrift:
     def test_finds_the_core_602_shape(self):

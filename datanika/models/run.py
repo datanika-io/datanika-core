@@ -128,3 +128,8 @@ class Run(Base, TenantMixin, TimestampMixin):
     # upload. NULL means not recorded: a run from before migration `j0k1l2m3n4o5`, or not an upload.
     catalog_sync_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
     catalog_sync_schema: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # core#1669. The upstream success that started this run, when the downstream
+    # starter did. NULL for a cron, a manual run, and a run from before migration
+    # ``c3a8e1f4b7d2``. Nullable, no default, no foreign key: previously deployed
+    # workers insert runs without naming the column.
+    caused_by_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

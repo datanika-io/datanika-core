@@ -15,26 +15,25 @@ dependencies = [
     # lost is `s3://` bucket URLs on the file source (`gs://` and `az://` still
     # work — `gcsfs` and `adlfs` survive via other extras).
     #
-    # 🔑 s3fs is excluded by TWO DIFFERENT constraints, one on each side of a
-    # gap with no release in it. Both measured with `uv lock` against this
-    # exact tree; do not re-derive from either half alone, because each looks
-    # like the whole story and each points at the wrong package.
+    # s3fs is not declared. The two old constraints are recorded so neither
+    # half is re-derived as the whole story. Both were measured with `uv lock`
+    # against this tree; each one names a package that looks like the culprit.
     #
     #   s3fs <= 2025.12.0 -> `aiobotocore<3.0.0` -> botocore ~1.41, but
     #     `redshift-connector>=2.1.14` (the CVE-2026-8838 RCE fix) floors
     #     `boto3>=1.42.22`.                          Blocker: aiobotocore.
     #   s3fs >= 2026.1.0  -> `fsspec>=2026.1` -> `gcsfs` ->
-    #     `google-cloud-storage>=3.7.0`, but EVERY dbt-bigquery through 1.12.0
-    #     declares `google-cloud-storage>=2.4,<3.2`.
-    #                                     Blocker: google-cloud-storage.
+    #     `google-cloud-storage>=3.7.0`. dbt-bigquery 1.12.0, 1.12.1 and 1.12.2
+    #     declare `google-cloud-storage>=2.4,<3.2`. Published 1.12.3 declares
+    #     `google-cloud-storage>=2.4,<4.0`. The declared range `>=1.11,<2`
+    #     already admits 1.12.3. That ceiling is not a local override, and it
+    #     is not what keeps fsspec on 2025.12.0: gcsfs 2025.12.0 does.
     #
-    # ⚠️ The FIRST blocker is already dissolving upstream and is NOT the one to
-    # watch: `aiobotocore 3.0.0` (2025-12-10) crossed into botocore 1.42, and
-    # `s3fs 2026.1.0` (2026-01-09) raised its ceiling to `aiobotocore<4.0.0`.
-    # `aiobotocore 3.9.0` + `redshift-connector 2.1.16` resolve together in
-    # this tree today — verified. So the live blocker is the SECOND one, and it
-    # is a BigQuery/S3 collision inside Google's own client libraries that has
-    # nothing to do with security or with dbt-core.
+    # ⚠️ The FIRST blocker dissolved upstream: `aiobotocore 3.0.0` (2025-12-10)
+    # crossed into botocore 1.42, and `s3fs 2026.1.0` (2026-01-09) raised its
+    # ceiling to `aiobotocore<4.0.0`. Calling `<3.2` the live blocker describes
+    # 1.12.2 and earlier. CVE-2026-104851 is cleared by fsspec 2026.6.0, which
+    # published gcsfs 2026.4.0 accepts. This change does not add s3fs.
     #
     # See BLOCKED_BY_S3FS_CONFLICT in
     # tests/test_security/test_dependency_advisories.py for the mechanical
@@ -323,6 +322,17 @@ constraint-dependencies = [
     # requires oauthlib<4; 4.7.0 allows oauthlib<5. Same major of the connector.
     "oauthlib>=4.0.1,<5",
     "databricks-sql-connector>=4.7.0,<5",
+    # ---- CVE-2026-104851 (fsspec ReferenceFileSystem) ----------------------
+    # Transitive: dlt and gcsfs. gcsfs 2025.12.0 holds fsspec at 2025.12.0.
+    # 2026.6.0 is the named fix and the only release in this range. gcsfs
+    # 2026.4.0 is the first published release that accepts it (fsspec>=2026.4.0)
+    # and requires google-cloud-storage>=3.9. dbt-bigquery 1.12.3 allows <4.0;
+    # 1.12.0 through 1.12.2 still cap storage at <3.2, so the resolver takes
+    # 1.12.3 from the existing >=1.11,<2 range. No storage override.
+    # Calendar versions: the ceiling is the next minor, not the next year,
+    # so a re-lock cannot walk back and cannot float to 2026.9 / 2026.10.
+    "fsspec>=2026.6.0,<2026.7",
+    "gcsfs>=2026.4.0,<2026.5",
 ]
 
 [tool.ruff]

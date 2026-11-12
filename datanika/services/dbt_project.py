@@ -685,6 +685,28 @@ class DbtProjectService:
             return True
         return False
 
+    def write_macro(self, org_id: int, name: str, sql_body: str) -> Path:
+        """Write one macro, ``macros/{name}.sql``. Returns the file path."""
+        _validate_identifier(name, "Macro name")
+        if name == "generate_schema_name":
+            raise DbtProjectError(
+                "generate_schema_name is owned by the project and cannot be imported"
+            )
+        macros_dir = self.get_project_path(org_id) / "macros"
+        macros_dir.mkdir(parents=True, exist_ok=True)
+        sql_path = macros_dir / f"{name}.sql"
+        sql_path.write_text(sql_body)
+        return sql_path
+
+    def write_singular_test(self, org_id: int, name: str, sql_body: str) -> Path:
+        """Write one singular test, ``tests/{name}.sql``. Returns the file path."""
+        _validate_identifier(name, "Test name")
+        tests_dir = self.get_project_path(org_id) / "tests"
+        tests_dir.mkdir(parents=True, exist_ok=True)
+        sql_path = tests_dir / f"{name}.sql"
+        sql_path.write_text(sql_body)
+        return sql_path
+
     def write_packages_yml(self, org_id: int, packages: list[dict]) -> Path:
         """Write packages.yml for the tenant project. Returns path."""
         project_path = self.get_project_path(org_id)

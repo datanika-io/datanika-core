@@ -457,7 +457,29 @@ SCHEMAS = {
             "transformations": {
                 "type": "array",
                 "items": {"type": "object"},
-                "description": "Transformations to create.",
+                "description": "Transformations (dbt models) to create.",
+            },
+            "macros": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "dbt macros to write as macros/{name}.sql.",
+            },
+            "packages": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "Hub packages (package and version only). Replaces packages.yml.",
+            },
+            "snapshots": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": (
+                    "dbt snapshots to write. Not transformations and not schedule targets."
+                ),
+            },
+            "tests": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "Singular SQL tests to write as tests/{name}.sql.",
             },
         },
         required=["version"],
@@ -939,9 +961,10 @@ def build_openapi_spec() -> dict:
             "summary": "Bulk-import resources from a JSON config",
             "description": (
                 "Create connections, uploads, pipelines, and transformations "
-                "in a single call. Validates the entire payload first; if any "
-                "errors are found, nothing is created (atomic). Uses the same "
-                "JSON v2 format as AI_IMPORT_GUIDE.md."
+                "in a single call, and write macros, Hub packages, snapshots, "
+                "and singular SQL tests into the org dbt project. Validates "
+                "the entire payload first; if any errors are found, nothing "
+                "is created (atomic)."
             ),
             "requestBody": {
                 "required": True,

@@ -241,6 +241,14 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
     "python-dotenv": ("1.2.2", "CVE-2026-28684 (1.2.2) symlink following in set_key"),
     "requests": ("2.33.0", "CVE-2026-25645 (2.33.0) temp file reuse in extract_zipped_paths()"),
     "setuptools": ("83.0.0", "CVE-2026-59890 (83.0.0) MANIFEST.in exclusion bypass in an sdist"),
+    "fsspec": (
+        "2026.6.0",
+        "CVE-2026-104851 (2026.6.0) / GHSA-27vj-qcqg-25rc server-side template injection "
+        "in ReferenceFileSystem. gcsfs 2025.12.0 selects the vulnerable release. gcsfs "
+        "2026.4.0 is the first published release that accepts this fsspec, and it requires "
+        "google-cloud-storage>=3.9, which published dbt-bigquery 1.12.3 allows. Reached "
+        "via dlt's bigquery extra. image-cve run 42931652036.",
+    ),
 }
 
 
@@ -254,36 +262,29 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
 #: because that shape is the part that worked.
 
 
-#: capability -> (the package that would restore it, why it is unreachable).
+#: capability -> (the package that would restore it, why this change does not).
 #:
-#: This is NOT an advisory table. Nothing here is a security exposure; it
-#: records a **capability we ship documentation for and cannot currently
-#: resolve**, so that it is re-checked rather than quietly forgotten.
-#:
-#: 🚨 The reason this needs a guard rather than a comment: the shape of this
-#: conflict has now been mis-diagnosed three times in a row, each time by
-#: someone reasoning from one half of it. Both halves are real, they sit on
-#: either side of a version gap with no release in it, and each one names a
-#: package that looks like the culprit and is not.
+#: This is NOT an advisory table. Nothing here is a security exposure.
+#: Published s3fs 2026.6.0 resolves against this lock and is still not declared.
+#: The old "gap with no release" description does not survive dbt-bigquery 1.12.3.
 BLOCKED_BY_S3FS_CONFLICT: dict[str, tuple[str, str]] = {
     "s3fs": (
-        "2026.1.0",
+        "2026.6.0",
         "`s3://` bucket URLs on the file-source connector. dlt's filesystem source "
         "dispatches through fsspec, which maps the s3 protocol to s3fs specifically, so "
         "no s3fs means no s3:// -- while gs:// (gcsfs) and az:// (adlfs) keep working. "
-        "TWO independent constraints exclude it, one on each side of a gap: "
-        "(1) s3fs<=2025.12.0 requires aiobotocore<3.0.0, which caps botocore around "
-        "1.41, but redshift-connector>=2.1.14 -- the CVE-2026-8838 RCE fix -- floors "
-        "boto3>=1.42.22; "
-        "(2) s3fs>=2026.1.0 requires fsspec>=2026.1, which drags gcsfs up to needing "
-        "google-cloud-storage>=3.7.0, but every dbt-bigquery through 1.12.0 declares "
-        "google-cloud-storage>=2.4,<3.2. "
-        "Constraint (1) is ALREADY DISSOLVED upstream and is not the one to watch: "
-        "aiobotocore 3.0.0 (2025-12-10) crossed into botocore 1.42 and s3fs 2026.1.0 "
-        "(2026-01-09) raised its ceiling to aiobotocore<4.0.0; aiobotocore 3.9.0 and "
-        "redshift-connector 2.1.16 resolve together in this tree today. Constraint (2) "
-        "is the live one, and it is a BigQuery/S3 collision inside Google's own client "
-        "libraries -- unrelated to security, and unrelated to dbt-core.",
+        "The two old constraints are dissolved, and neither is the live blocker. "
+        "(1) s3fs<=2025.12.0 required aiobotocore<3.0.0, against the boto3 floor in "
+        "redshift-connector>=2.1.14 (the CVE-2026-8838 RCE fix). aiobotocore 3.x and "
+        "that connector resolve together. "
+        "(2) s3fs>=2026.1.0 required fsspec>=2026.1 and, through gcsfs, "
+        "google-cloud-storage>=3.7. dbt-bigquery 1.12.0, 1.12.1 and 1.12.2 declare "
+        "google-cloud-storage>=2.4,<3.2. Published 1.12.3 declares >=2.4,<4.0, and "
+        "this lock takes 1.12.3. Calling <3.2 the live blocker describes 1.12.2 and "
+        "earlier. Published s3fs 2026.6.0 requires fsspec>=2026.6.0,<2026.6.1, the "
+        "fsspec this lock holds, and a scratch resolve of that release was accepted. "
+        "It is not in this change. Restoring s3:// means declaring s3fs, putting s3 "
+        "back into SOURCE_TYPES, and re-enabling the requires_s3fs tests.",
     ),
 }
 
@@ -300,18 +301,12 @@ BLOCKED_BY_S3FS_CONFLICT: dict[str, tuple[str, str]] = {
 #: this file; it was blind to the third party changing without us.
 
 
-#: The mechanical re-check trigger for ``BLOCKED_BY_S3FS_CONFLICT``.
-#:
-#: dbt-bigquery's ``google-cloud-storage<3.2`` ceiling is the live blocker, and
-#: we cannot read dbt-bigquery's metadata offline -- but we can read its
-#: *consequence*: while that ceiling is in force the resolver cannot take
-#: google-cloud-storage to the 3.7+ that modern gcsfs (and therefore modern
-#: s3fs) requires. So the day this lock carries google-cloud-storage >= 3.7,
-#: the ceiling has moved and s3fs is worth re-testing.
-#:
-#: ⚠️ Deliberately NOT asserted as "s3fs is absent". That would be a tautology
-#: over our own pyproject.toml -- it would fail only when somebody had already
-#: done the work, which is the one moment a reminder is useless.
+#: The old mechanical trigger for ``BLOCKED_BY_S3FS_CONFLICT`` was
+#: ``google-cloud-storage < 3.7``. That was the consequence of dbt-bigquery
+#: 1.12.0 through 1.12.2 declaring ``google-cloud-storage>=2.4,<3.2``. Published
+#: 1.12.3 allows ``<4.0``. The lock is now at or above 3.7, which is the fact
+#: the assertion below guards. s3fs stays undeclared on purpose; absence is
+#: checked by ``test_each_deferred_package_is_still_actually_absent_from_the_lock``.
 _S3FS_RECHECK_GCS_VERSION = "3.7.0"
 
 
@@ -418,10 +413,9 @@ class TestDeferredCapability:
     it fired the day the dbt pin moved and handed over six packages and their
     needed versions. Those are now in ``SECURITY_FLOORS``.
 
-    The shape is kept because the shape is what worked -- **every assertion
-    here goes red when the blocker lifts**, so the day `s3://` becomes
-    resolvable again is the day someone is told, rather than a day four months
-    from now when nobody remembers the trade was made.
+    The storage ceiling that used to make ``s3://`` unresolvable has lifted.
+    The assertions below record that fact and still fail if s3fs appears in
+    the lock while this table still calls it deferred.
 
     ⚠️ Do not "simplify" this into an assertion that s3fs is absent from
     pyproject.toml. That reads as equivalent and is the opposite: it would fail
@@ -429,33 +423,34 @@ class TestDeferredCapability:
     is no longer needed. The assertion has to be on the *external* condition.
     """
 
-    def test_the_blocker_for_the_deferred_capability_still_exists(self):
-        """dbt-bigquery's google-cloud-storage ceiling is what still excludes s3fs.
+    def test_the_storage_ceiling_that_excluded_s3fs_has_lifted(self):
+        """dbt-bigquery 1.12.3 removed the <3.2 ceiling. s3fs is still not added.
 
-        Read through its consequence in the lock rather than from dbt-bigquery's
-        metadata, so the check needs no network and cannot pass because a fetch
-        failed.
+        Read the lock, not dbt-bigquery's metadata, so the check needs no
+        network. google-cloud-storage below 3.7 would mean that ceiling is
+        back and this table's reason is stale in the other direction.
         """
         locked = _locked_versions()
         gcs = locked.get("google-cloud-storage")
         assert gcs is not None, (
-            "google-cloud-storage is no longer in the lock. It was the package "
-            "whose ceiling excluded s3fs, so this guard can no longer see its "
-            "own blocker -- re-derive BLOCKED_BY_S3FS_CONFLICT from scratch "
-            "rather than deleting this test."
+            "google-cloud-storage is no longer in the lock. Re-derive "
+            "BLOCKED_BY_S3FS_CONFLICT rather than deleting this test."
         )
-        assert Version(gcs) < Version(_S3FS_RECHECK_GCS_VERSION), (
-            f"google-cloud-storage resolved to {gcs}, at or above "
-            f"{_S3FS_RECHECK_GCS_VERSION}. That ceiling "
-            "(dbt-bigquery: google-cloud-storage>=2.4,<3.2) was the LIVE reason "
-            "these capabilities were unreachable:\n  "
+        assert Version(gcs) >= Version(_S3FS_RECHECK_GCS_VERSION), (
+            f"google-cloud-storage resolved to {gcs}, below "
+            f"{_S3FS_RECHECK_GCS_VERSION}. dbt-bigquery 1.12.0 through 1.12.2 "
+            "declare google-cloud-storage>=2.4,<3.2; published 1.12.3 allows "
+            "<4.0. A lock back under 3.7 makes the old ceiling the blocker "
+            "again:\n  "
             + "\n  ".join(
                 f"{name}: needs >={need} -- {why}"
                 for name, (need, why) in sorted(BLOCKED_BY_S3FS_CONFLICT.items())
             )
-            + "\nRe-run `uv lock` with s3fs declared. If it resolves, restore "
-            "the capability, re-enable the tests marked with "
-            "`requires_s3fs`, and delete this table."
+        )
+        bigquery = locked.get("dbt-bigquery")
+        assert bigquery is not None and Version(bigquery) >= Version("1.12.3"), (
+            f"dbt-bigquery resolved to {bigquery}. 1.12.3 is the first 1.12 "
+            "release that allows google-cloud-storage<4.0."
         )
 
     def test_the_deferred_set_and_the_floor_set_are_disjoint(self):
@@ -470,8 +465,8 @@ class TestDeferredCapability:
         """If the resolver took it anyway, stop calling it deferred."""
         locked = _locked_versions()
         present = [
-            f"{name} {locked[name]} is in the lock (deferral claims >={need} is "
-            f"unreachable) -- {why}"
+            f"{name} {locked[name]} is in the lock while the deferral still "
+            f"withholds it (would need >={need}) -- {why}"
             for name, (need, why) in sorted(BLOCKED_BY_S3FS_CONFLICT.items())
             if name in locked
         ]

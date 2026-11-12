@@ -167,6 +167,17 @@ UNWALKED_DELEGATIONS = {
     # rejoins the walked path. References there are by connection *name*,
     # resolved against an org-scoped list, so no id crosses this boundary.
     ("api_v1_routes", "bulk_import_yaml", "parse_yaml_import(...)"),
+    # dbt_project_import.refused_import_key_errors looks only for the refused
+    # document keys. It does not read a resource id.
+    ("api_v1_routes", "bulk_import", "refused_import_key_errors(...)"),
+    # dbt_project_import.validate_project_sections checks names, shapes, Hub
+    # package keys, and snapshot fields. Connection ids stay in this module,
+    # resolved by name against the org, so none cross this call.
+    ("api_v1_routes", "bulk_import", "validate_project_sections(...)"),
+    # dbt_project_import.apply_project_files writes SQL and packages.yml under
+    # tenant_{org_id}. org_id is the caller's, and the writer does not read
+    # destination_connection_id or any other body resource id.
+    ("api_v1_routes", "bulk_import", "apply_project_files(...)"),
 }
 
 

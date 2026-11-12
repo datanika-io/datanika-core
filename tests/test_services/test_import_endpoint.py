@@ -105,24 +105,40 @@ def _patch_auth(fake_api_key, rate_limit_ok):
         def fake_session():
             yield session
 
+        import tempfile
+
         import datanika.services.api_v1_routes as routes_mod
+        from datanika.config import settings as app_settings
 
-        with (
-            patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
-            patch("datanika.services.api_middleware._rate_limit_svc") as mock_rl,
-            patch("datanika.services.api_middleware._get_session", fake_session),
-            patch.object(routes_mod, "_get_conn_svc", return_value=conn_svc),
-            patch.object(routes_mod, "_get_upload_svc", return_value=upload_svc),
-            patch.object(routes_mod, "_get_schedule_svc", return_value=schedule_svc),
-        ):
-            mock_svc.authenticate_api_key.return_value = fake_api_key
-            mock_rl.get_limit_for_org.return_value = 60
-            mock_rl.check_rate_limit.return_value = rate_limit_ok
+        # Import writes tenant_{org}/ under this directory. The default is the
+        # worktree, which is not gitignored. A caller that already pointed the
+        # setting at its own directory (the project-import tests) keeps it.
+        owned_projects = None
+        previous_projects = app_settings.dbt_projects_dir
+        if previous_projects in {"./dbt_projects", "dbt_projects"}:
+            owned_projects = tempfile.TemporaryDirectory()
+            app_settings.dbt_projects_dir = owned_projects.name
 
-            yield session
+        try:
+            with (
+                patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
+                patch("datanika.services.api_middleware._rate_limit_svc") as mock_rl,
+                patch("datanika.services.api_middleware._get_session", fake_session),
+                patch.object(routes_mod, "_get_conn_svc", return_value=conn_svc),
+                patch.object(routes_mod, "_get_upload_svc", return_value=upload_svc),
+                patch.object(routes_mod, "_get_schedule_svc", return_value=schedule_svc),
+            ):
+                mock_svc.authenticate_api_key.return_value = fake_api_key
+                mock_rl.get_limit_for_org.return_value = 60
+                mock_rl.check_rate_limit.return_value = rate_limit_ok
 
-        session.close()
-        engine.dispose()
+                yield session
+        finally:
+            if owned_projects is not None:
+                app_settings.dbt_projects_dir = previous_projects
+                owned_projects.cleanup()
+            session.close()
+            engine.dispose()
 
     return _ctx()
 

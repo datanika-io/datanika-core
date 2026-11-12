@@ -1538,6 +1538,9 @@ def _invalid_name_error(section: str, index: int, name) -> list[dict]:
 #: The sections ``_execute_validated_import`` creates from, in phase order.
 _IMPORT_SECTIONS = ("connections", "uploads", "pipelines", "transformations")
 
+#: The object cap also counts the project sections (SPEC_DBT_PROJECT_AND_DOWNSTREAM).
+_IMPORT_CAP_SECTIONS = _IMPORT_SECTIONS + ("macros", "packages", "snapshots", "tests")
+
 #: Ceiling on how many objects one import call may create, summed across every section (#1549).
 #:
 #: The four phases in ``_execute_validated_import`` are sequential bare loops inside a single
@@ -1560,13 +1563,24 @@ def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) ->
     ``existing_conn_names`` maps connection name → id for connections
     already present in the org.
     """
+    from datanika.services.dbt_project_import import (
+        refused_import_key_errors,
+        validate_project_sections,
+    )
+
+    # A refused key is a 400 for the whole document and creates nothing. It is
+    # returned alone, before the cap, so the two answers are not mixed.
+    refused = refused_import_key_errors(data)
+    if refused:
+        return refused
+
     # --- per-call object cap (#1549) ---
     # First, and returned ALONE. First because the phases that follow are sequential, so a refusal
     # has to land before phase 1 creates anything -- a refusal during phase 3 would leave phases 1
     # and 2 applied. Alone because per-item validation on an oversized payload answers an unbounded
     # request with an unbounded response, which is the same defect one layer up.
     per_section: dict[str, int] = {}
-    for section in _IMPORT_SECTIONS:
+    for section in _IMPORT_CAP_SECTIONS:
         value = data.get(section)
         if isinstance(value, list):
             per_section[section] = len(value)
@@ -1730,6 +1744,7 @@ def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) ->
                     }
                 )
 
+    errors.extend(validate_project_sections(data))
     return errors
 
 
@@ -1754,11 +1769,24 @@ def _import_scope_refusal(api_key, data: dict) -> JSONResponse | None:
     """
     if api_key.scopes is None:
         return None
-    missing = [
-        scope
-        for section, scope in _IMPORT_SECTION_SCOPES.items()
-        if data.get(section) and scope not in api_key.scopes
-    ]
+    from datanika.services.dbt_project_import import FILE_IMPORT_SECTIONS
+
+    missing: list[str] = []
+    for section, scope in _IMPORT_SECTION_SCOPES.items():
+        if data.get(section) and scope not in api_key.scopes and scope not in missing:
+            missing.append(scope)
+    # An empty list is still "sent" for the project sections. ``data.get`` is
+    # false for ``[]``, which would let ``packages: []`` through without
+    # ``transformations:write``.
+    for section in FILE_IMPORT_SECTIONS:
+        scope = "transformations:write"
+        if (
+            section in data
+            and data[section] is not None
+            and scope not in api_key.scopes
+            and scope not in missing
+        ):
+            missing.append(scope)
     if not missing:
         return None
     return _typed_error(
@@ -1864,6 +1892,9 @@ def _execute_validated_import(
         session.flush()
         created["transformations"].append(transformation.id)
 
+    from datanika.services.dbt_project_import import apply_project_files
+
+    apply_project_files(org_id, data)
     return created
 
 

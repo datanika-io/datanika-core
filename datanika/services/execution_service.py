@@ -233,12 +233,14 @@ class ExecutionService:
         org_id: int,
         target_type: NodeType,
         target_id: int,
+        caused_by_run_id: int | None = None,
     ) -> Run:
         run = Run(
             org_id=org_id,
             target_type=target_type,
             target_id=target_id,
             status=RunStatus.PENDING,
+            caused_by_run_id=caused_by_run_id,
         )
         session.add(run)
         session.flush()
@@ -414,6 +416,9 @@ class ExecutionService:
         if bytes_processed is not None:
             run.bytes_processed = bytes_processed
         session.flush()
+        from datanika.services.downstream_starter import note_terminal_run
+
+        note_terminal_run(session, run)
         return run
 
     def fail_run(
@@ -440,6 +445,9 @@ class ExecutionService:
         run.error_message = error_message
         run.logs = logs
         session.flush()
+        from datanika.services.downstream_starter import note_terminal_run
+
+        note_terminal_run(session, run)
 
         # A run the user cancelled that then errors is not a failure they need paging
         # about -- `run.failed` reaches Slack, email and in-app. Announcing here would

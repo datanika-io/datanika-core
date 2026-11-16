@@ -136,7 +136,14 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
         "block is for transitive packages we do not declare, and adding a second "
         "authority for a package that already has one is how two numbers drift apart.",
     ),
-    "soupsieve": ("2.8.4", "CVE-2026-49476 memory exhaustion and CVE-2026-49477 ReDoS"),
+    "soupsieve": (
+        "4.0.0",
+        "CVE-2026-126190 (4.0.0) descendant-combinator DoS and CVE-2026-126191 "
+        "(3.0.2) selector-compilation ReDoS. CVE-2026-49476 and CVE-2026-49477 "
+        "stay cleared below this floor. Transitive via redshift-connector's "
+        "beautifulsoup4, which declares soupsieve>=1.6.1 and no ceiling. "
+        "image-cve run 43876329693.",
+    ),
     "thrift": (
         "0.24.0",
         "CVE-2026-41608 (0.24.0) DoS via deeply nested structures and CVE-2026-43871 (0.24.0) "

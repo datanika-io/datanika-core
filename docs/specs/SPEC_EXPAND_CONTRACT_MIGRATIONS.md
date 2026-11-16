@@ -73,7 +73,7 @@ That splits every breaking change into phases across **separate releases**:
 | Narrowing a type | Old code writes wider values | Widen-only; narrow in a later release |
 | `DROP TABLE` still referenced | Old code queries it | Orphan it first, drop later |
 | Adding a `UNIQUE` constraint | Old code may write duplicates | Deduplicate + enforce in the app first |
-| Rename a key inside stored JSON the previous release reads (`connections.config`) | Old code, still serving at t1 and on a worker that restarts later, reads the old key | Keep writing the old key and read both in release N. Stop writing the old key in N+1. The connection-schema decision is [`SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md`](SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md). |
+| Rename a key inside stored JSON the previous release reads (`connections.config_encrypted`) | Old code, still serving at t1 and on a worker that restarts later, reads the old key | Keep writing the old key and read both in release N. Stop writing the old key in N+1. The connection-schema decision is [`SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md`](SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md). |
 
 ### Renaming a column — the canonical worked example
 
@@ -89,7 +89,7 @@ guaranteed `t1` outage.
 
 ### A key inside stored JSON
 
-`connections.config` is one JSON column. Renaming a key inside it has the same
+`connections.config_encrypted` holds the stored config. Renaming a key inside it has the same
 overlap as renaming a column. The previous release is still serving at t1, and
 the worker restarts separately, so it keeps reading the key it shipped with.
 

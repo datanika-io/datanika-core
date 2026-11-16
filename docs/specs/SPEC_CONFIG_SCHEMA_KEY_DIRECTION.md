@@ -15,7 +15,7 @@ This spec does not rebuild that guard and does not edit those docstrings.
 ## Decision
 
 `CONFIG_SCHEMAS` moves to the keys the connection form writes and the loader requires.
-The form stays. Stored `connections.config` rows stay as they are.
+The form stays. Stored rows keep `connections.config_encrypted` as it is.
 
 `openapi_inline.py` builds `ConnectionCreate` from `CONFIG_SCHEMAS`, and
 `GET /api/v1/meta/connection-types` returns the same document. That is the
@@ -90,7 +90,7 @@ optional alias that loader already reads:
 
 ## Expand/contract
 
-A rename that changes which key is written into `connections.config` is
+A rename that changes which key is written into `connections.config_encrypted` is
 expand/contract, in the sense of
 [`SPEC_EXPAND_CONTRACT_MIGRATIONS.md`](SPEC_EXPAND_CONTRACT_MIGRATIONS.md).
 The column is unchanged. The previous release is still serving while the new
@@ -108,7 +108,7 @@ that later release.
 This schema edit does not open that window. The form already writes the keys
 in the table above, and the loader already requires them. Editing
 `CONFIG_SCHEMAS` changes the document `openapi_inline` publishes. It does not
-write `connections.config`. Do not migrate rows in the same change. Do not
+write `connections.config_encrypted`. Do not migrate rows in the same change. Do not
 remove an alias read in the same change. Removing the read is the contract
 half.
 

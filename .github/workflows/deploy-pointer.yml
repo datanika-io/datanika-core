@@ -343,6 +343,17 @@ jobs:
           echo "$LIVE healthy"
           VERIFY
 
+      # datanika-io/datanika-cloud#141. .env.docker is preserved, not shipped, so a reviewable flag
+      # set only there has no pull-request diff. This step prints each such
+      # override by name and by the value the serving container's settings
+      # object resolved. --report-only is load-bearing: flags already in the
+      # preserved production file must not fail the deploy. The exit-1 path
+      # is the synthetic staging test, not this step.
+      - name: Report reviewable settings drift
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'cd /opt/datanika/datanika && bash scripts/check-reviewable-drift.sh --env prod --report-only'
+
       # Monitoring config (prometheus.yml, grafana provisioning) is BIND-MOUNTED, so the
       # transfer updates it on disk but nothing re-reads it: the container spec is
       # unchanged, so `compose up -d` won't recreate, and Grafana only reads provisioning

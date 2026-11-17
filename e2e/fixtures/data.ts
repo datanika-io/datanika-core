@@ -399,3 +399,69 @@ export async function runUploadAndAwait(
       "`run_upload[<taskid>] received`.",
   );
 }
+
+/**
+ * Save a transformation on `/transformations` and return its model name.
+ *
+ * The page has no Run button. Preview Result is the control that compiles the
+ * model through dbt and executes that SQL against the destination, which is
+ * what puts transformed rows on the screen. Creating the row first is what
+ * makes the preview read the saved model rather than an unsaved form.
+ */
+export async function createTransformation(
+  page: Page,
+  modelName: string,
+  destination: ConnectionRef,
+  sql: string,
+): Promise<string> {
+  await gotoReady(page, "/transformations");
+
+  const nameField = page.getByPlaceholder(
+    "Model name (letters, digits, underscores, hyphens)",
+  );
+  await present(page, nameField, "the transformation name field");
+  await nameField.fill(modelName, { timeout: UI_TIMEOUT });
+
+  // Same option shape as the upload pickers: "{id} — {name} ({type})".
+  // The placeholder is what an empty destination trigger shows.
+  await selectConnectionOption(page, "Select connection...", destination);
+
+  const sqlField = page.locator("#sql-editor");
+  await present(page, sqlField, "the SQL editor (#sql-editor)");
+  await sqlField.fill(sql, { timeout: UI_TIMEOUT });
+
+  await clickAndAwaitReflexEvent(
+    page,
+    page.getByRole("button", { name: "Create Transformation" }),
+    {
+      handlerMatch: "save_transformation",
+      what: `Create Transformation for "${modelName}"`,
+      clickTimeoutMs: UI_TIMEOUT,
+    },
+  );
+
+  const row = page.getByRole("row").filter({ hasText: modelName });
+  await expect(
+    row,
+    `transformation "${modelName}" did not appear in the table`,
+  ).toBeVisible({ timeout: UI_TIMEOUT });
+  return modelName;
+}
+
+/**
+ * Click Preview Result on the saved transformation row.
+ *
+ * Returns once the event is on the wire. The caller waits for the preview
+ * table: dbt compile is the slow part, and it happens after this frame.
+ */
+export async function previewTransformation(page: Page, modelName: string): Promise<void> {
+  const row = page.getByRole("row").filter({ hasText: modelName });
+  await expect(row, `transformation "${modelName}" is not listed`).toBeVisible({
+    timeout: UI_TIMEOUT,
+  });
+  await clickAndAwaitReflexEvent(page, row.getByRole("button", { name: "Preview Result" }), {
+    handlerMatch: "preview_result",
+    what: `Preview Result for "${modelName}"`,
+    clickTimeoutMs: UI_TIMEOUT,
+  });
+}

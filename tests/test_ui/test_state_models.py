@@ -148,6 +148,9 @@ class TestConnectionBuildConfig:
             "form_base_url": "",
             "form_api_key": "",
             "form_extra_headers": "",
+            # The REST `auth` object. `_build_config` reads it on every rest_api
+            # save; a stand-in that omits it raises instead of writing nothing.
+            "form_rest_auth": "",
             "form_uploaded_file_id": 0,
             "form_uploaded_file_name": "",
             "form_spreadsheet_url": "",

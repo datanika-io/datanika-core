@@ -808,7 +808,8 @@ SECRET_CONFIG_KEYS = frozenset(
         # asserts this set is a superset of every sensitive schema field.
         "api_token",
         # Slack publishes `bot_token` as the optional alias of `api_key` (core#1603).
-        # The form writes `api_key`. The loader still reads this name.
+        # The form writes both names from the one field (core#662). The loader
+        # still reads this name.
         "bot_token",
         "auth_password",
         "auth_token",

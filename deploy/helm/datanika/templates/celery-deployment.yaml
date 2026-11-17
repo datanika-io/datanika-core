@@ -45,6 +45,10 @@ spec:
             # upload time (core#529, and #471's comment on docker-compose.yml).
             - name: uploaded-files
               mountPath: /app/uploaded_files
+            # Same claim as the app deployment. The load writes the file and
+            # data preview reads it in the web process (core#793).
+            - name: duckdb
+              mountPath: /var/datanika/duckdb
           resources:
             {{- toYaml .Values.celery.resources | nindent 12 }}
       volumes:
@@ -54,6 +58,9 @@ spec:
         - name: uploaded-files
           persistentVolumeClaim:
             claimName: {{ include "datanika.fullname" . }}-uploaded-files
+        - name: duckdb
+          persistentVolumeClaim:
+            claimName: {{ include "datanika.fullname" . }}-duckdb
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

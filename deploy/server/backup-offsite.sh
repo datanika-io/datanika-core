@@ -56,10 +56,11 @@ DB_USER=datanika
 DB_NAME=datanika
 LOCAL_KEEP_DAYS=7
 REMOTE_KEEP_DAYS=30
-# Docker volumes the dump REFERENCES but does not contain (core#954). Each is
-# archived and shipped as its own artifact — see the block below for why both,
-# and why "dbt projects are regenerable" is only three-quarters true.
-FILE_VOLUMES="datanika_uploaded_files datanika_dbt_projects"
+# Docker volumes the dump REFERENCES but does not contain (core#954, core#793).
+# Each is archived and shipped as its own artifact. The block below is why
+# `datanika_dbt_projects` stays on the list. `datanika_duckdb_data` is the prod
+# compose volume `duckdb_data`. Staging's `staging_duckdb` stays off this list.
+FILE_VOLUMES="datanika_uploaded_files datanika_dbt_projects datanika_duckdb_data"
 TEXTFILE_DIR=/opt/datanika/node_textfile   # node-exporter textfile collector (backup freshness metric)
 GPG_RECIPIENT=backup@datanika.io           # fingerprint BA853D54E247C0B99FD06116306A85F70420B8AA
 export GNUPGHOME="${GNUPGHOME:-/root/.gnupg}"   # overridable: cron leaves it unset, but a test must be able to remove the key

@@ -89,6 +89,10 @@ app:
   ## Uploaded-file archives, shared with the celery worker. Sized for the 20 MB
   ## per-file cap in FileUploadService plus retention.
   uploadedFilesSize: 5Gi
+  ## DuckDB files shared by the web tier and the worker, at
+  ## /var/datanika/duckdb. Same default as the other shared claims; raise the
+  ## key when a warehouse outgrows it (core#793).
+  duckdbSize: 5Gi
 
 ## Celery worker.
 celery:

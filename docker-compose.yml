@@ -193,6 +193,9 @@ services:
       # Uploads lived inside the image: every rebuild destroyed the archives while their
       # UploadedFile rows survived, leaving dangling archive_paths (#471).
       - uploaded_files:/app/uploaded_files
+      # DuckDB is its own lifecycle. Do not put the file on uploaded_files
+      # or dbt_projects (core#793). app_b carries the same mount.
+      - duckdb_data:/var/datanika/duckdb
     command: >
       sh -c "uv run alembic upgrade head &&
              uv run reflex run --env prod --backend-host 0.0.0.0"
@@ -285,6 +288,9 @@ services:
       # path fails at run time rather than upload time — the slower, more confusing
       # failure. app_b carries it too, or a blue/green swap would lose them.
       - uploaded_files:/app/uploaded_files
+      # Same DuckDB file the serving colour opens, so a swap does not move it
+      # (core#793).
+      - duckdb_data:/var/datanika/duckdb
     command: >
       sh -c "uv run alembic upgrade head &&
              uv run reflex run --env prod --backend-host 0.0.0.0"
@@ -327,6 +333,9 @@ services:
     volumes:
       - dbt_projects:/app/dbt_projects
       - uploaded_files:/app/uploaded_files
+      # The load writes the DuckDB file; data preview reads it in the web
+      # process. Same mount as app and app_b (core#793).
+      - duckdb_data:/var/datanika/duckdb
     # `-E` (core#704) is what makes the worker publish task-lifecycle events onto the
     # broker. It is NOT cosmetic and it is not the exporter's job: measured on staging
     # 2026-08-31, an exporter pointed at a worker running WITHOUT `-E` emits
@@ -429,7 +438,7 @@ services:
   #
   # No `--pidfile`: celery 5 defaults to no PID file (`beat --help`), so there is no
   # stale-pidfile crash loop to guard against. Checked rather than assumed.
-  # No dbt/uploads mounts: beat dispatches, it never touches either tree.
+  # No dbt/uploads/duckdb mounts: beat dispatches, it never opens those trees.
   beat:
     image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}
     build:
@@ -483,8 +492,8 @@ services:
   # Postgres, and these are CRON triggers whose next fire time is absolute, so a restart
   # recomputes the same instants. There is no local state to lose.
   #
-  # No dbt/uploads mounts: it creates a Run row and calls `.delay()`. It never touches either
-  # tree — same reasoning as `beat`.
+  # No dbt/uploads/duckdb mounts: it creates a Run row and calls `.delay()`. It never
+  # opens those trees — same reasoning as `beat`.
   scheduler:
     image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}
     build:
@@ -697,6 +706,9 @@ volumes:
   # Shared rw by app, app_b and celery — see #471. The load runs in the worker, so a
   # web-only path would fail at run time rather than upload time.
   uploaded_files:
+  # DuckDB files shared by app, app_b, and celery (core#793). Not the upload
+  # archive and not the dbt project tree.
+  duckdb_data:
   # Celery Beat's shelve DB. On a volume so `last_run_at` survives a deploy — without it
   # an interval entry restarts its hour on every recreate and may never fire (core#653).
   beat_state:

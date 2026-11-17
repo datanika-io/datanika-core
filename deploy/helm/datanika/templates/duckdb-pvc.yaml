@@ -1,0 +1,20 @@
+{{/*
+DuckDB files shared by the app and celery Deployments (core#793).
+
+ReadWriteMany because both Deployments mount it, and app.replicaCount can be
+greater than 1. A claim the worker cannot see is the FileNotFoundError the
+uploads claim already names for a CSV to DuckDB first run.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "datanika.fullname" . }}-duckdb
+  labels:
+    {{- include "datanika.labels" . | nindent 4 }}
+    app.kubernetes.io/component: duckdb
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.app.duckdbSize }}

@@ -144,7 +144,11 @@ def archives_the_referenced_volumes(text: str) -> bool:
     if not match:
         return False
     volumes = set(match.group(1).split())
-    return {"datanika_uploaded_files", "datanika_dbt_projects"} <= volumes
+    return {
+        "datanika_uploaded_files",
+        "datanika_dbt_projects",
+        "datanika_duckdb_data",
+    } <= volumes
 
 
 def missing_volume_aborts(text: str) -> bool:
@@ -248,7 +252,11 @@ def drill_exercises_both_volume_artifacts(text: str) -> bool:
     comment block *explaining* the volume satisfied, so removing it from the real
     list left the check green.
     """
-    assigns = re.search(r'^VOLUMES="datanika_uploaded_files datanika_dbt_projects"$', text, re.M)
+    assigns = re.search(
+        r'^VOLUMES="datanika_uploaded_files datanika_dbt_projects datanika_duckdb_data"$',
+        text,
+        re.M,
+    )
     decrypts = re.search(r'gpg [^\n]*--decrypt "\$\{VENC\}"', text)
     return bool(assigns) and bool(decrypts)
 
@@ -366,8 +374,8 @@ MUTATIONS = {
     "refuses_without_key": ('gpg --list-keys "${GPG_RECIPIENT}"', "true"),
     "prunes_both_remote_patterns": ("-name '*.sql.gz.gpg' -mtime", "-name '*.nope' -mtime"),
     "archives_the_referenced_volumes": (
+        'FILE_VOLUMES="datanika_uploaded_files datanika_dbt_projects datanika_duckdb_data"',
         'FILE_VOLUMES="datanika_uploaded_files datanika_dbt_projects"',
-        'FILE_VOLUMES="datanika_uploaded_files"',
     ),
     # Split out so the line stays inside the ruff limit. Removing the `exit 1`
     # leaves the diagnostic echo in place, which is the realistic regression:
@@ -400,8 +408,8 @@ MUTATIONS = {
     # a member, the count losing its independent expectation, the cross-check
     # losing its lookup, the vacuity guard losing its `exit 1`.
     "drill_exercises_both_volume_artifacts": (
+        'VOLUMES="datanika_uploaded_files datanika_dbt_projects datanika_duckdb_data"',
         'VOLUMES="datanika_uploaded_files datanika_dbt_projects"',
-        'VOLUMES="datanika_uploaded_files"',
     ),
     "drill_volume_count_comes_from_the_backups_own_record": (
         'if [ "${MEMBERS}" != "${EXPECTED}" ]',

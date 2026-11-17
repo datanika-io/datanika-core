@@ -343,9 +343,14 @@ def test_the_resource_sweep_is_armed() -> None:
         "the type carrying 7 of the writes is missing from the sweep, so the headline "
         "finding of core#1128 could not be reproduced by this file"
     )
-    # Only ``BaseState._audit`` forwards a variable. If this grows, a call site has
-    # started computing its resource type and the comparison below has a blind spot.
-    assert len(unresolved) <= 1, f"unresolved resource_type arguments: {unresolved}"
+    # Two chokepoints forward their own parameter and write nothing of their
+    # own: BaseState._audit, and the v1 route helper (core#1534). A third
+    # forward, or any other expression, is a blind spot.
+    forwarded = sorted((item.split(":", 1)[0], item.split(" ", 1)[1]) for item in unresolved)
+    assert forwarded == [
+        ("datanika/services/api_v1_routes.py", "resource_type"),
+        ("datanika/ui/state/base_state.py", "resource_type"),
+    ], unresolved
 
 
 def test_every_written_resource_type_is_filterable() -> None:

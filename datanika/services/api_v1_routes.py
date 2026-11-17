@@ -5,6 +5,7 @@ All endpoints use @api_endpoint() for authentication + rate limiting.
 Tenant isolation via api_key.org_id.
 """
 
+import copy
 import json
 import logging
 
@@ -44,6 +45,72 @@ from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService, validate_upload_name
 
 logger = logging.getLogger(__name__)
+
+
+def _audit(
+    session,
+    org_id: int,
+    user_id: int | None,
+    action: AuditAction | str,
+    resource_type: str,
+    *,
+    resource_id: int | None = None,
+    old_values: dict | None = None,
+    new_values: dict | None = None,
+    api_key_id: int,
+) -> None:
+    """A mutating v1 route's row, on the handler's own session (SPEC_AUDIT_TRAIL §9).
+
+    ``AuditAction(action)`` rejects a typo before the write (§9.9). ``api_key_id`` is
+    recorded and the key's name is not (§8.6): a name is free text, and redaction
+    matches key names, so personal data under ``api_key_name`` would be stored whole.
+    The swallow is ``BaseState._audit``'s policy. ``log_action`` still flushes, so a
+    failure that breaks the session fails the caller's commit — this protects a bad
+    payload, not a broken session.
+    """
+    published = {} if new_values is None else dict(new_values)
+    published["api_key_id"] = api_key_id
+    try:
+        AuditService().log_action(
+            session,
+            org_id,
+            user_id,
+            AuditAction(action),
+            resource_type,
+            resource_id=resource_id,
+            old_values=old_values,
+            new_values=published,
+        )
+    except Exception:
+        logger.exception(
+            "Audit write failed and was dropped: action=%s resource=%s org=%s key=%s",
+            action,
+            resource_type,
+            org_id,
+            api_key_id,
+        )
+
+
+def _record_import(session, api_key, created: dict[str, list]) -> None:
+    """One row for the import, counting all four sections (SPEC_AUDIT_TRAIL §9.8)."""
+    counts = {
+        "connections_imported": len(created["connections"]),
+        "uploads_imported": len(created["uploads"]),
+        "pipelines_imported": len(created["pipelines"]),
+        "transformations_imported": len(created["transformations"]),
+    }
+    if not any(counts.values()):
+        return
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.CREATE,
+        "import",
+        new_values=counts,
+        api_key_id=api_key.id,
+    )
+
 
 _pipeline_svc = PipelineService()
 _transform_svc = TransformationService()
@@ -313,6 +380,16 @@ def create_connection(request, api_key, session):
     # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
     except UserFacingError as exc:
         return _error(400, str(exc))
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.CREATE,
+        "connection",
+        resource_id=conn.id,
+        new_values={"name": conn.name, "connection_type": conn.connection_type.value},
+        api_key_id=api_key.id,
+    )
     return JSONResponse(_ser_connection(conn), status_code=201)
 
 
@@ -362,6 +439,13 @@ def parse_openapi(request, api_key, session):
 def update_connection(request, api_key, session):
     conn_id = int(request.path_params["id"])
     data = _body_sync(request)
+    existing = _get_conn_svc().get_connection(session, api_key.org_id, conn_id)
+    was_name = existing.name if existing is not None else None
+    was_type = existing.connection_type.value if existing is not None else None
+    was_config = None
+    if existing is not None and "config" in data:
+        current = _get_conn_svc().get_connection_config(session, api_key.org_id, conn_id)
+        was_config = copy.deepcopy(current) if current is not None else None
     kwargs = {}
     if "name" in data:
         kwargs["name"] = data["name"]
@@ -382,16 +466,53 @@ def update_connection(request, api_key, session):
         return _error(400, str(exc))
     if conn is None:
         return _error(404, "Connection not found")
+    # §9.6. `was_*` is taken before the call. `conn` is the same object the
+    # service mutates, so reading it afterwards is the new value. Config is
+    # compared and never stored: it holds the credential.
+    config_changed = False
+    if was_config is not None:
+        now_config = _get_conn_svc().get_connection_config(session, api_key.org_id, conn_id)
+        config_changed = now_config != was_config
+    if existing is not None and (
+        conn.name != was_name or conn.connection_type.value != was_type or config_changed
+    ):
+        _audit(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            AuditAction.UPDATE,
+            "connection",
+            resource_id=conn.id,
+            old_values={"name": was_name, "connection_type": was_type},
+            new_values={"name": conn.name, "connection_type": conn.connection_type.value},
+            api_key_id=api_key.id,
+        )
     return JSONResponse(_ser_connection(conn))
 
 
 @api_endpoint(required_scope="connections:write")
 def delete_connection(request, api_key, session):
     conn_id = int(request.path_params["id"])
+    conn = _get_conn_svc().get_connection(session, api_key.org_id, conn_id)
+    was = (
+        {"name": conn.name, "connection_type": conn.connection_type.value}
+        if conn is not None
+        else None
+    )
     if not _get_conn_svc().delete_connection(
         session, api_key.org_id, conn_id, actor_user_id=api_key.user_id
     ):
         return _error(404, "Connection not found")
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.DELETE,
+        "connection",
+        resource_id=conn_id,
+        old_values=was,
+        api_key_id=api_key.id,
+    )
     return JSONResponse({"deleted": True})
 
 
@@ -586,6 +707,20 @@ def create_upload(request, api_key, session):
     # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
     except UserFacingError as exc:
         return _error(400, str(exc))
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.CREATE,
+        "upload",
+        resource_id=upload.id,
+        new_values={
+            "name": upload.name,
+            "source": str(upload.source_connection_id),
+            "destination": str(upload.destination_connection_id),
+        },
+        api_key_id=api_key.id,
+    )
     return JSONResponse(_ser_upload(upload), status_code=201)
 
 
@@ -593,6 +728,12 @@ def create_upload(request, api_key, session):
 def update_upload(request, api_key, session):
     upload_id = int(request.path_params["id"])
     data = _body_sync(request)
+    existing = _get_upload_svc().get_upload(session, api_key.org_id, upload_id)
+    was_name = existing.name if existing is not None else None
+    was_source = str(existing.source_connection_id) if existing is not None else None
+    was_dest = str(existing.destination_connection_id) if existing is not None else None
+    was_desc = existing.description if existing is not None else None
+    was_dlt = copy.deepcopy(existing.dlt_config) if existing is not None else None
     kwargs = {}
     for key in ("name", "description", "dlt_config"):
         if key in data:
@@ -611,16 +752,48 @@ def update_upload(request, api_key, session):
         return _error(400, str(exc))
     if upload is None:
         return _error(404, "Upload not found")
+    # §9.6. Description and dlt_config decide whether a row is owed. The row
+    # carries the twin's keys (upload_state.py). dlt_config stays out of it.
+    if existing is not None and (
+        upload.name != was_name or upload.description != was_desc or upload.dlt_config != was_dlt
+    ):
+        _audit(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            AuditAction.UPDATE,
+            "upload",
+            resource_id=upload.id,
+            old_values={"name": was_name, "source": was_source, "destination": was_dest},
+            new_values={
+                "name": upload.name,
+                "source": str(upload.source_connection_id),
+                "destination": str(upload.destination_connection_id),
+            },
+            api_key_id=api_key.id,
+        )
     return JSONResponse(_ser_upload(upload))
 
 
 @api_endpoint(required_scope="uploads:write")
 def delete_upload(request, api_key, session):
     upload_id = int(request.path_params["id"])
+    upload = _get_upload_svc().get_upload(session, api_key.org_id, upload_id)
+    was = {"name": upload.name} if upload is not None else None
     if not _get_upload_svc().delete_upload(
         session, api_key.org_id, upload_id, actor_user_id=api_key.user_id
     ):
         return _error(404, "Upload not found")
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.DELETE,
+        "upload",
+        resource_id=upload_id,
+        old_values=was,
+        api_key_id=api_key.id,
+    )
     return JSONResponse({"deleted": True})
 
 
@@ -694,6 +867,16 @@ async def trigger_upload(request, api_key, session):
     run = _exec_svc.create_requested_run(
         session, api_key.org_id, NodeType.UPLOAD, upload_id, actor_user_id=api_key.user_id
     )
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.RUN,
+        "upload",
+        resource_id=upload_id,
+        new_values={"target_type": "upload", "target_id": upload_id},
+        api_key_id=api_key.id,
+    )
     session.commit()
     from datanika.tasks.upload_tasks import run_upload_task
 
@@ -757,6 +940,16 @@ def create_pipeline(request, api_key, session):
     # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
     except UserFacingError as exc:
         return _error(400, str(exc))
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.CREATE,
+        "pipeline",
+        resource_id=pipeline.id,
+        new_values={"name": pipeline.name, "command": pipeline.command.value},
+        api_key_id=api_key.id,
+    )
     return JSONResponse(_ser_pipeline(pipeline), status_code=201)
 
 
@@ -764,6 +957,14 @@ def create_pipeline(request, api_key, session):
 def update_pipeline(request, api_key, session):
     pipeline_id = int(request.path_params["id"])
     data = _body_sync(request)
+    existing = _pipeline_svc.get_pipeline(session, api_key.org_id, pipeline_id)
+    was_name = existing.name if existing is not None else None
+    was_command = existing.command.value if existing is not None else None
+    was_desc = existing.description if existing is not None else None
+    was_full = existing.full_refresh if existing is not None else None
+    was_models = copy.deepcopy(existing.models) if existing is not None else None
+    was_selector = existing.custom_selector if existing is not None else None
+    was_dest = existing.destination_connection_id if existing is not None else None
     kwargs = {}
     for key in ("name", "description", "full_refresh", "models", "custom_selector"):
         if key in data:
@@ -789,16 +990,52 @@ def update_pipeline(request, api_key, session):
         return _error(400, str(exc))
     if pipeline is None:
         return _error(404, "Pipeline not found")
+    # §9.6. The row carries the twin's keys (pipeline_state.py). Models and
+    # the selector are compared so a change to them is not a silent 200.
+    if existing is not None and (
+        pipeline.name != was_name
+        or pipeline.command.value != was_command
+        or pipeline.description != was_desc
+        or pipeline.full_refresh != was_full
+        or pipeline.models != was_models
+        or pipeline.custom_selector != was_selector
+        or pipeline.destination_connection_id != was_dest
+    ):
+        _audit(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            AuditAction.UPDATE,
+            "pipeline",
+            resource_id=pipeline.id,
+            old_values={"name": was_name, "command": was_command},
+            new_values={"name": pipeline.name, "command": pipeline.command.value},
+            api_key_id=api_key.id,
+        )
     return JSONResponse(_ser_pipeline(pipeline))
 
 
 @api_endpoint(required_scope="pipelines:write")
 def delete_pipeline(request, api_key, session):
     pipeline_id = int(request.path_params["id"])
+    pipeline = _pipeline_svc.get_pipeline(session, api_key.org_id, pipeline_id)
+    was = (
+        {"name": pipeline.name, "command": pipeline.command.value} if pipeline is not None else None
+    )
     if not _pipeline_svc.delete_pipeline(
         session, api_key.org_id, pipeline_id, actor_user_id=api_key.user_id
     ):
         return _error(404, "Pipeline not found")
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.DELETE,
+        "pipeline",
+        resource_id=pipeline_id,
+        old_values=was,
+        api_key_id=api_key.id,
+    )
     return JSONResponse({"deleted": True})
 
 
@@ -810,6 +1047,18 @@ async def trigger_pipeline(request, api_key, session):
         return _error(404, "Pipeline not found")
     run = _exec_svc.create_requested_run(
         session, api_key.org_id, NodeType.PIPELINE, pipeline_id, actor_user_id=api_key.user_id
+    )
+    # §2.1. The row joins the run's commit. After it, the middleware's commit
+    # is a second transaction and the dispatch has already left.
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.RUN,
+        "pipeline",
+        resource_id=pipeline_id,
+        new_values={"target_type": "pipeline", "target_id": pipeline_id},
+        api_key_id=api_key.id,
     )
     session.commit()
     from datanika.tasks.pipeline_tasks import run_pipeline_task
@@ -876,6 +1125,16 @@ def create_transformation(request, api_key, session):
     # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
     except UserFacingError as exc:
         return _error(400, str(exc))
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.CREATE,
+        "transformation",
+        resource_id=t.id,
+        new_values={"name": t.name, "materialization": t.materialization.value},
+        api_key_id=api_key.id,
+    )
     return JSONResponse(_ser_transformation(t), status_code=201)
 
 
@@ -883,6 +1142,16 @@ def create_transformation(request, api_key, session):
 def update_transformation(request, api_key, session):
     tid = int(request.path_params["id"])
     data = _body_sync(request)
+    existing = _transform_svc.get_transformation(session, api_key.org_id, tid)
+    was_name = existing.name if existing is not None else None
+    was_mat = existing.materialization.value if existing is not None else None
+    was_desc = existing.description if existing is not None else None
+    was_sql = existing.sql_body if existing is not None else None
+    was_schema = existing.schema_name if existing is not None else None
+    was_tests = copy.deepcopy(existing.tests_config) if existing is not None else None
+    was_tags = copy.deepcopy(existing.tags) if existing is not None else None
+    was_inc = copy.deepcopy(existing.incremental_config) if existing is not None else None
+    was_dest = existing.destination_connection_id if existing is not None else None
     kwargs = {}
     for key in (
         "name",
@@ -914,16 +1183,56 @@ def update_transformation(request, api_key, session):
         return _error(400, str(exc))
     if t is None:
         return _error(404, "Transformation not found")
+    # §9.6. SQL and tests are compared and never stored. The row carries the
+    # twin's keys (transformation_state.py).
+    if existing is not None and (
+        t.name != was_name
+        or t.materialization.value != was_mat
+        or t.description != was_desc
+        or t.sql_body != was_sql
+        or t.schema_name != was_schema
+        or t.tests_config != was_tests
+        or t.tags != was_tags
+        or t.incremental_config != was_inc
+        or t.destination_connection_id != was_dest
+    ):
+        _audit(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            AuditAction.UPDATE,
+            "transformation",
+            resource_id=t.id,
+            old_values={"name": was_name, "materialization": was_mat},
+            new_values={"name": t.name, "materialization": t.materialization.value},
+            api_key_id=api_key.id,
+        )
     return JSONResponse(_ser_transformation(t))
 
 
 @api_endpoint(required_scope="transformations:write")
 def delete_transformation(request, api_key, session):
     tid = int(request.path_params["id"])
+    existing = _transform_svc.get_transformation(session, api_key.org_id, tid)
+    was = (
+        {"name": existing.name, "materialization": existing.materialization.value}
+        if existing is not None
+        else None
+    )
     if not _transform_svc.delete_transformation(
         session, api_key.org_id, tid, actor_user_id=api_key.user_id
     ):
         return _error(404, "Transformation not found")
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.DELETE,
+        "transformation",
+        resource_id=tid,
+        old_values=was,
+        api_key_id=api_key.id,
+    )
     return JSONResponse({"deleted": True})
 
 
@@ -935,6 +1244,18 @@ async def trigger_transformation(request, api_key, session):
         return _error(404, "Transformation not found")
     run = _exec_svc.create_requested_run(
         session, api_key.org_id, NodeType.TRANSFORMATION, tid, actor_user_id=api_key.user_id
+    )
+    # §2.1. Same commit as the run row. §9.7: no UI twin, resource is the
+    # transformation that was started.
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.RUN,
+        "transformation",
+        resource_id=tid,
+        new_values={"target_type": "transformation", "target_id": tid},
+        api_key_id=api_key.id,
     )
     session.commit()
     from datanika.tasks.transformation_tasks import run_transformation_task
@@ -1085,6 +1406,24 @@ def create_schedule(request, api_key, session):
     # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
     except UserFacingError as exc:
         return _error(400, str(exc))
+    # The UI twin names the target; this route has no display name, so the
+    # row names the target by type and id (schedule_state.py).
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.CREATE,
+        "schedule",
+        resource_id=s.id,
+        new_values={
+            "cron": s.cron_expression,
+            "timezone": s.timezone,
+            "is_active": s.is_active,
+            "target_type": s.target_type.value,
+            "target_id": s.target_id,
+        },
+        api_key_id=api_key.id,
+    )
     return JSONResponse(_ser_schedule(s), status_code=201)
 
 
@@ -1092,6 +1431,12 @@ def create_schedule(request, api_key, session):
 def update_schedule(request, api_key, session):
     sid = int(request.path_params["id"])
     data = _body_sync(request)
+    existing = _get_schedule_svc().get_schedule(session, api_key.org_id, sid)
+    was_cron = existing.cron_expression if existing is not None else None
+    was_tz = existing.timezone if existing is not None else None
+    was_active = existing.is_active if existing is not None else None
+    was_type = existing.target_type.value if existing is not None else None
+    was_tid = existing.target_id if existing is not None else None
     kwargs = {}
     for key in ("cron_expression", "timezone", "is_active"):
         if key in data:
@@ -1106,16 +1451,60 @@ def update_schedule(request, api_key, session):
         return _error(400, str(exc))
     if s is None:
         return _error(404, "Schedule not found")
+    # §9.6. Timezone is not on the UI twin and is on this row, because a
+    # timezone-only edit would otherwise record identical cron and is_active.
+    if existing is not None and (
+        s.cron_expression != was_cron or s.timezone != was_tz or s.is_active != was_active
+    ):
+        _audit(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            AuditAction.UPDATE,
+            "schedule",
+            resource_id=s.id,
+            old_values={
+                "cron": was_cron,
+                "timezone": was_tz,
+                "is_active": was_active,
+                "target_type": was_type,
+                "target_id": was_tid,
+            },
+            new_values={
+                "cron": s.cron_expression,
+                "timezone": s.timezone,
+                "is_active": s.is_active,
+                "target_type": s.target_type.value,
+                "target_id": s.target_id,
+            },
+            api_key_id=api_key.id,
+        )
     return JSONResponse(_ser_schedule(s))
 
 
 @api_endpoint(required_scope="schedules:write")
 def delete_schedule(request, api_key, session):
     sid = int(request.path_params["id"])
+    existing = _get_schedule_svc().get_schedule(session, api_key.org_id, sid)
+    was = (
+        {"cron": existing.cron_expression, "is_active": existing.is_active}
+        if existing is not None
+        else None
+    )
     if not _get_schedule_svc().delete_schedule(
         session, api_key.org_id, sid, actor_user_id=api_key.user_id
     ):
         return _error(404, "Schedule not found")
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.DELETE,
+        "schedule",
+        resource_id=sid,
+        old_values=was,
+        api_key_id=api_key.id,
+    )
     return JSONResponse({"deleted": True})
 
 
@@ -1460,6 +1849,16 @@ def create_notification_channel(request, api_key, session):
         raise  # §7.1 belongs to api_middleware -- see create_connection
     except ValueError as exc:
         return _error(400, str(exc))
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.CREATE,
+        "notification_channel",
+        resource_id=ch.id,
+        new_values={"name": ch.name, "type": ch.channel_type.value},
+        api_key_id=api_key.id,
+    )
     return JSONResponse(_ser_channel(ch), status_code=201)
 
 
@@ -1467,6 +1866,11 @@ def create_notification_channel(request, api_key, session):
 def update_notification_channel(request, api_key, session):
     cid = int(request.path_params["id"])
     data = _body_sync(request)
+    existing = _notif_svc.get_channel(session, cid, api_key.org_id)
+    was_name = existing.name if existing is not None else None
+    was_active = existing.is_active if existing is not None else None
+    was_events = copy.deepcopy(existing.events) if existing is not None else None
+    was_config = copy.deepcopy(existing.config) if existing is not None else None
     kwargs = {}
     for key in ("name", "config", "events", "is_active"):
         if key in data:
@@ -1481,14 +1885,45 @@ def update_notification_channel(request, api_key, session):
         return _error(400, str(exc))
     if ch is None:
         return _error(404, "Notification channel not found")
+    # §9.6 and §9.9. Config is a credential: compared, never stored. The UI
+    # toggle writes nothing; this route still writes when is_active changes.
+    if existing is not None and (
+        ch.name != was_name
+        or ch.is_active != was_active
+        or ch.events != was_events
+        or ch.config != was_config
+    ):
+        _audit(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            AuditAction.UPDATE,
+            "notification_channel",
+            resource_id=ch.id,
+            old_values={"name": was_name, "is_active": was_active},
+            new_values={"name": ch.name, "is_active": ch.is_active},
+            api_key_id=api_key.id,
+        )
     return JSONResponse(_ser_channel(ch))
 
 
 @api_endpoint(required_scope="notifications:write")
 def delete_notification_channel(request, api_key, session):
     cid = int(request.path_params["id"])
+    existing = _notif_svc.get_channel(session, cid, api_key.org_id)
+    was = {"name": existing.name} if existing is not None else None
     if not _notif_svc.delete_channel(session, cid, api_key.org_id, actor_user_id=api_key.user_id):
         return _error(404, "Notification channel not found")
+    _audit(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        AuditAction.DELETE,
+        "notification_channel",
+        resource_id=cid,
+        old_values=was,
+        api_key_id=api_key.id,
+    )
     return JSONResponse({"deleted": True})
 
 
@@ -1927,6 +2362,9 @@ def bulk_import(request, api_key, session):
     created = _execute_validated_import(
         session, api_key.org_id, data, actor_user_id=api_key.user_id
     )
+    # §9.8. One row for the call, after a successful execute. Validation
+    # failures return above this and write nothing.
+    _record_import(session, api_key, created)
     return JSONResponse({"created": created}, status_code=201)
 
 
@@ -1990,6 +2428,9 @@ def bulk_import_yaml(request, api_key, session):
     created = _execute_validated_import(
         session, api_key.org_id, data, actor_user_id=api_key.user_id
     )
+    # §9.8. One row for the call, after a successful execute. Validation
+    # failures return above this and write nothing.
+    _record_import(session, api_key, created)
     return JSONResponse({"created": created}, status_code=201)
 
 

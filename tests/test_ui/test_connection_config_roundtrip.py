@@ -17,12 +17,13 @@ test whose docstring says *"a setting with no surface is the core#499 mistake"*.
 
 ## Why this ships as a ratchet rather than a clean green
 
-Measured, the drift is **21 keys across 13 types**, not one. Fixing all of them means
+Measured, the drift was **21 keys across 13 types**, not one. Fixing all of them means
 touching thirteen connector field groups and re-deciding, per key, whether the schema or
-the form has the right name — and for `slack` and `salesforce` neither matches what the
-runner reads (core#662). Holding this test back until then leaves the *mechanism*
-unguarded for however long that takes, and the mechanism is what keeps producing new
-instances.
+the form has the right name — and for `slack` and `salesforce` neither matched what the
+runner reads (core#662). core#1603 moved the published required lists for those nine
+types onto the keys the form writes. A loader alias the form does not write stays on
+the ledger below. Holding this test back until the rest is fixed leaves the *mechanism*
+unguarded, and the mechanism is what keeps producing new instances.
 
 So `_DROPPED_ON_SAVE` records what is broken today and the check forbids that set from
 **growing**. `test_the_ledger_does_not_outlive_the_defects` forbids it from rotting:
@@ -66,20 +67,18 @@ _PLACEHOLDER: dict[str, object] = {
 #: it from here the moment it is fixed.
 _DROPPED_ON_SAVE: dict[str, set[str]] = {
     "clickhouse": {"cluster_replication"},
-    "csv": {"path"},
-    "google_sheets": {"spreadsheet_id"},
-    "jira": {"api_token", "server_url"},
-    "json": {"path"},
+    # core#1603: these are loader aliases. The form writes the required name and
+    # does not write the alias. Opening a stored alias in the form still drops it.
+    "jira": {"api_token"},
     # `mongodb` left this ledger with core#626 — `auth_source` now has a form
     # input and a line in both serialisers, and `tls`/`srv` arrived with lines in
     # both from the start. `test_the_ledger_does_not_outlive_the_defects` is what
     # forced the deletion: leaving the entry here after the fix fails, naming it.
-    "parquet": {"path"},
     "rest_api": {"auth_password", "auth_token", "auth_type", "auth_user"},
-    "salesforce": {"client_id", "client_secret", "password", "security_token", "username"},
-    "shopify": {"access_token", "shop_url"},
-    "slack": {"token"},
-    "zendesk": {"api_token"},
+    "salesforce": {"api_key"},
+    "shopify": {"access_token"},
+    "slack": {"bot_token"},
+    "zendesk": {"api_token", "domain"},
 }
 
 #: Types whose `_populate_form_from_config` raises on a synthetic config, so the

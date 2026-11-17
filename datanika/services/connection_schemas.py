@@ -37,13 +37,30 @@ def _bool(description: str, default: bool = False) -> dict:
     return {"type": "boolean", "description": description, "default": default}
 
 
-def _schema(properties: dict, required: list[str]) -> dict:
-    return {
+def _schema(properties: dict, required: list[str], *, any_of: list[dict] | None = None) -> dict:
+    schema = {
         "type": "object",
         "properties": properties,
         "required": required,
         "additionalProperties": False,
     }
+    if any_of is not None:
+        schema["anyOf"] = any_of
+    return schema
+
+
+def _file_locator_schema(kind: str) -> dict:
+    """A file source stores a bucket URL, an uploaded file, or both."""
+    return _schema(
+        {
+            "bucket_url": _str(f"Bucket URL of the {kind} file or directory"),
+            "uploaded_file_id": _int(
+                "Uploaded file id. Resolved to a bucket URL before the loader runs"
+            ),
+        },
+        required=[],
+        any_of=[{"required": ["bucket_url"]}, {"required": ["uploaded_file_id"]}],
+    )
 
 
 # JSON Schemas for each connection type's `config` field
@@ -208,48 +225,51 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         {"api_key": _str("HubSpot API key", sensitive=True)},
         required=["api_key"],
     ),
+    # core#1603: required keys are what the form writes. A loader alias stays
+    # optional. The five-field password flow is not what the loader runs.
     "salesforce": _schema(
         {
-            "client_id": _str("Connected app client ID"),
-            "client_secret": _str("Connected app client secret", sensitive=True),
-            "username": _str("Salesforce username"),
-            "password": _str("Salesforce password", sensitive=True),
-            "security_token": _str("Security token", sensitive=True),
+            "access_token": _str("Access token", sensitive=True),
+            "instance_url": _str("Instance URL"),
+            "api_key": _str("Access token alias the loader already accepts", sensitive=True),
         },
-        required=[
-            "client_id",
-            "client_secret",
-            "username",
-            "password",
-            "security_token",
-        ],
+        required=["access_token", "instance_url"],
     ),
     "shopify": _schema(
         {
-            "shop_url": _str("Shop URL (e.g. my-store.myshopify.com)"),
-            "access_token": _str("Admin API access token", sensitive=True),
+            "api_key": _str("Admin API access token", sensitive=True),
+            "store": _str("Shop name. The loader builds {store}.myshopify.com"),
+            "access_token": _str("Alias for the Admin API token", sensitive=True),
         },
-        required=["shop_url", "access_token"],
+        required=["api_key", "store"],
     ),
     "jira": _schema(
         {
-            "server_url": _str("Jira server URL"),
+            "api_key": _str("API token", sensitive=True),
             "email": _str("Account email"),
-            "api_token": _str("API token", sensitive=True),
+            "domain": _str(
+                "Atlassian subdomain. The loader builds https://{domain}.atlassian.net/"
+            ),
+            "api_token": _str("Alias for the API token", sensitive=True),
         },
-        required=["server_url", "email", "api_token"],
+        required=["api_key", "email", "domain"],
     ),
     "slack": _schema(
-        {"token": _str("Slack bot token", sensitive=True)},
-        required=["token"],
+        {
+            "api_key": _str("Slack bot token", sensitive=True),
+            "bot_token": _str("Alias for the bot token", sensitive=True),
+        },
+        required=["api_key"],
     ),
     "zendesk": _schema(
         {
             "subdomain": _str("Zendesk subdomain"),
             "email": _str("Account email"),
-            "api_token": _str("API token", sensitive=True),
+            "api_key": _str("API token", sensitive=True),
+            "api_token": _str("Alias for the API token", sensitive=True),
+            "domain": _str("Alias for the subdomain"),
         },
-        required=["subdomain", "email", "api_token"],
+        required=["subdomain", "email", "api_key"],
     ),
     "airtable": _schema(
         {
@@ -332,13 +352,13 @@ CONFIG_SCHEMAS: dict[str, dict] = {
     ),
     "google_sheets": _schema(
         {
-            "spreadsheet_id": _str("Google Sheets spreadsheet ID"),
+            "spreadsheet_url": _str("Google Sheets spreadsheet URL"),
             "service_account_json": _str(
                 "Service account JSON",
                 sensitive=True,
             ),
         },
-        required=["spreadsheet_id", "service_account_json"],
+        required=["spreadsheet_url", "service_account_json"],
     ),
     "mongodb": _schema(
         {
@@ -421,18 +441,9 @@ CONFIG_SCHEMAS: dict[str, dict] = {
     # resolve at all. Its ConnectionType member, its loader dispatch and its file
     # classification all stay, so a connection already stored still loads and
     # still fails with an error that explains itself. See WITHDRAWN_SOURCE_TYPES.
-    "csv": _schema(
-        {"path": _str("Path to CSV file or directory")},
-        required=["path"],
-    ),
-    "json": _schema(
-        {"path": _str("Path to JSON file or directory")},
-        required=["path"],
-    ),
-    "parquet": _schema(
-        {"path": _str("Path to Parquet file or directory")},
-        required=["path"],
-    ),
+    "csv": _file_locator_schema("CSV"),
+    "json": _file_locator_schema("JSON"),
+    "parquet": _file_locator_schema("Parquet"),
     # ---- Streaming ----
     # ⚠️ The four security fields are OPTIONAL in the schema and mandatory in
     # practice. Every managed Kafka a user can reach — Confluent Cloud, Redpanda

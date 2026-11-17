@@ -298,13 +298,10 @@ def _fill_openapi_auth(scheme: dict, token: str) -> dict:
 #: ``_build_config`` **already refuses** a spec that yields no usable base URL. Adding ``base_url``
 #: here would break the spec-with-``servers``-and-blank-field row that §2.7 rules correct.
 #:
-#: ⚠️ **``CONFIG_SCHEMAS[...]["required"]`` is NOT the oracle for this table and disagrees with it
-#: for four types** (measured 2026-09-25): it requires ``jira.server_url``, ``shopify.shop_url``,
-#: ``slack.token`` and salesforce's five-field OAuth set — key names this form never collects. It
-#: is a separate, older contract consumed by ``openapi_inline`` and the credential-key derivation,
-#: and reconciling the two is not this issue. Gate on the **form** field.
-#: 🔑 *Derived structurally 2026-09-26, that key-drift population is NINE, not four* — ``csv``,
-#: ``google_sheets``, ``json``, ``parquet`` and ``zendesk`` are the unnamed five (core#1603).
+#: ⚠️ **``CONFIG_SCHEMAS[...]["required"]`` matches the keys this form writes for the nine types
+#: core#1603 named** (``csv``, ``google_sheets``, ``jira``, ``json``, ``parquet``, ``salesforce``,
+#: ``shopify``, ``slack``, ``zendesk``). A loader alias stays a schema property and stays off
+#: ``required``. This table remains the save gate.
 #:
 #: 🚦 **But "not the oracle" does not mean "wrong", and reading it that way is the trap**
 #: (core#1606, ``SPEC_FIELD_REQUIREDNESS`` §2.10). Where the schema and this table disagree about

@@ -151,25 +151,20 @@ A file Datanika exports writes `"__REDACTED__"` instead; both are recognised. An
 ```json
 {"connection_type": "salesforce", "config": {"access_token": "CHANGE_ME", "instance_url": "https://yourorg.my.salesforce.com"}}
 ```
-<!-- Do NOT "correct" this back toward CONFIG_SCHEMAS["salesforce"], which declares client_id /
-     client_secret / username / password / security_token. Those five are read by nothing: the form
-     renders Access Token + Instance URL, and the runner requires exactly `access_token` (or `api_key`)
-     and `instance_url`, raising otherwise. Schema correction tracked on core#662 item 3. -->
 
 **shopify**
 ```json
-{"connection_type": "shopify", "config": {"access_token": "CHANGE_ME", "store": "my-store"}}
+{"connection_type": "shopify", "config": {"api_key": "CHANGE_ME", "store": "my-store"}}
 ```
-<!-- `store` is the SUBDOMAIN ONLY — both consumers interpolate it, as
-     `https://{store}.myshopify.com/`. The schema's `shop_url` ("my-store.myshopify.com") is read by
-     nothing, and pasting that value here yields `my-store.myshopify.com.myshopify.com`. -->
+<!-- `store` is the shop name only. The loader builds `https://{store}.myshopify.com/`.
+     `access_token` still runs as a loader alias. A validating client sends `api_key`. -->
 
 **jira**
 ```json
-{"connection_type": "jira", "config": {"domain": "mycompany", "email": "user@example.com", "api_token": "CHANGE_ME"}}
+{"connection_type": "jira", "config": {"api_key": "CHANGE_ME", "domain": "mycompany", "email": "user@example.com"}}
 ```
-<!-- `domain` is the Atlassian SUBDOMAIN and is required; the schema's `server_url` is read by nothing.
-     `api_token` works because that runner accepts `api_key` or `api_token`. -->
+<!-- `domain` is the Atlassian subdomain. The loader builds `https://{domain}.atlassian.net/`.
+     `api_token` still runs as a loader alias. A validating client sends `api_key`. -->
 
 > ⚠️ **These payloads are verified against what `dlt_runner.py` reads per connector branch, not against
 > `CONFIG_SCHEMAS`.** The two disagree for 13 of 37 types (core#662), and the schema is the surface
@@ -180,12 +175,12 @@ A file Datanika exports writes `"__REDACTED__"` instead; both are recognised. An
 
 **slack**
 ```json
-{"connection_type": "slack", "config": {"token": "CHANGE_ME"}}
+{"connection_type": "slack", "config": {"api_key": "CHANGE_ME"}}
 ```
 
 **zendesk**
 ```json
-{"connection_type": "zendesk", "config": {"subdomain": "mycompany", "email": "admin@example.com", "api_token": "CHANGE_ME"}}
+{"connection_type": "zendesk", "config": {"api_key": "CHANGE_ME", "subdomain": "mycompany", "email": "admin@example.com"}}
 ```
 
 **airtable**
@@ -215,7 +210,7 @@ A file Datanika exports writes `"__REDACTED__"` instead; both are recognised. An
 
 **google_sheets**
 ```json
-{"connection_type": "google_sheets", "config": {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms", "service_account_json": "CHANGE_ME"}}
+{"connection_type": "google_sheets", "config": {"spreadsheet_url": "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms", "service_account_json": "CHANGE_ME"}}
 ```
 
 **mongodb**
@@ -232,17 +227,17 @@ A file Datanika exports writes `"__REDACTED__"` instead; both are recognised. An
 
 **csv**
 ```json
-{"connection_type": "csv", "config": {"path": "/data/exports/orders.csv"}}
+{"connection_type": "csv", "config": {"bucket_url": "/data/exports/orders.csv"}}
 ```
 
 **json**
 ```json
-{"connection_type": "json", "config": {"path": "/data/exports/events.json"}}
+{"connection_type": "json", "config": {"bucket_url": "/data/exports/events.json"}}
 ```
 
 **parquet**
 ```json
-{"connection_type": "parquet", "config": {"path": "/data/exports/transactions.parquet"}}
+{"connection_type": "parquet", "config": {"bucket_url": "/data/exports/transactions.parquet"}}
 ```
 
 #### Streaming (source only)

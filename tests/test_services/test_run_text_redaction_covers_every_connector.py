@@ -200,13 +200,13 @@ _CONNECTION_STATE = (
 #: writes ``headers``, which ``CONFIG_SCHEMAS["rest_api"]`` now declares.
 #: 10 -> 5 on 2026-11-17 (core#1603): ``bucket_url``, ``uploaded_file_id``, ``instance_url``,
 #: ``spreadsheet_url`` and ``store`` are properties of the schemas the form already writes.
+#: 5 -> 4 on core#662: ``table_engine_type`` is the ClickHouse property the destination reads.
 _UNDECLARED_FORM_KEYS = frozenset(
     {
         "aws_access_key_id",
         "aws_secret_access_key",
         "endpoint_url",
         "region_name",
-        "table_engine_type",
     }
 )
 

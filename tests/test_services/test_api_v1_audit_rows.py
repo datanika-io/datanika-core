@@ -9,30 +9,54 @@ mutating route outside that set writes no row. A new writer passes. A new
 silent mutation does not.
 """
 
-# Pytest registers an imported fixture by name, then binds that same name as
-# the test parameter. That is the registration, not a second definition.
-# ruff: noqa: F811
-
 from __future__ import annotations
 
 import ast
 import json
 from pathlib import Path
+from unittest.mock import MagicMock
 
+import pytest
 from sqlalchemy import select
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
 
 from datanika.models.audit_log import AuditAction, AuditLog
 from datanika.services import api_v1_routes as routes_mod
-from tests.test_services.test_api_v1_routes import (  # noqa: F401
-    _auth_headers,
-    _patch_auth,
-    app,
-    client,
-    fake_api_key,
-    rate_limit_ok,
-)
+from datanika.services.api_v1_routes import api_v1_routes
+from datanika.services.rate_limit_service import RateLimitResult
+from tests.test_services.test_api_v1_routes import _auth_headers, _patch_auth
 
 _ROUTES = Path(routes_mod.__file__)
+
+
+@pytest.fixture
+def fake_api_key():
+    key = MagicMock()
+    key.id = 1
+    key.org_id = 10
+    key.user_id = 1
+    key.name = "Test Key"
+    key.scopes = None
+    return key
+
+
+@pytest.fixture
+def rate_limit_ok():
+    return RateLimitResult(
+        allowed=True,
+        current_count=1,
+        limit=60,
+        remaining=59,
+        retry_after=0,
+        reset_at=9999999999,
+    )
+
+
+@pytest.fixture
+def client():
+    return TestClient(Starlette(routes=api_v1_routes))
+
 
 #: Argued absences, not a writer census. §9.4 the notification centre owes
 #: nothing because neither door audits. §9.5 connection test performs no

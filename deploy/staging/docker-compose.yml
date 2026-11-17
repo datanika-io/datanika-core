@@ -91,6 +91,7 @@ services:
     volumes:
       - staging_dbt:/app/dbt_projects
       - staging_uploads:/app/uploaded_files
+      - staging_duckdb:/var/datanika/duckdb
     command: >
       sh -c "uv run alembic upgrade head &&
              uv run reflex run --env prod --backend-host 0.0.0.0"
@@ -157,6 +158,7 @@ services:
     volumes:
       - staging_dbt:/app/dbt_projects
       - staging_uploads:/app/uploaded_files
+      - staging_duckdb:/var/datanika/duckdb
     command: >
       sh -c "uv run alembic upgrade head &&
              uv run reflex run --env prod --backend-host 0.0.0.0"
@@ -187,6 +189,7 @@ services:
     volumes:
       - staging_dbt:/app/dbt_projects
       - staging_uploads:/app/uploaded_files
+      - staging_duckdb:/var/datanika/duckdb
     # `-E` publishes task-lifecycle events for the celery-exporter (core#704). See the
     # prod `docker-compose.yml` for why this is not optional: without it the exporter
     # still reports `celery_worker_up` and reads healthy while emitting no task metrics
@@ -262,4 +265,7 @@ volumes:
   staging_redisdata:
   staging_dbt:
   staging_uploads:
+  # Own key from prod duckdb_data. The staging project name keeps this volume
+  # off the prod backup list (core#793).
+  staging_duckdb:
   staging_beat_state:

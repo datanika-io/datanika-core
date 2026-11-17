@@ -76,13 +76,14 @@ See `values.yaml` for the full list. Common overrides:
 | `app.replicaCount` | `1` | Keep at `1` until the migration job is extracted (see caveats) |
 | `app.dbtProjectsSize` | `5Gi` | Size of the shared dbt projects PVC |
 | `app.uploadedFilesSize` | `5Gi` | Size of the shared uploaded-files PVC |
+| `app.duckdbSize` | `5Gi` | Size of the shared DuckDB PVC (`/var/datanika/duckdb`) |
 | `env.FILE_UPLOADS_DIR` | `/app/uploaded_files` | Must match the mount path and be identical for both tiers — the app default is relative to the working directory, so a shared volume alone is not enough |
 
 ## Known caveats
 
 - **RWX storage required.** The `app` and `celery` Deployments both mount
-  the `dbt_projects` and `uploaded_files` PVCs, so the chart requests
-  `ReadWriteMany` for both. On managed
+  the `dbt_projects`, `uploaded_files`, and `duckdb` PVCs, so the chart requests
+  `ReadWriteMany` for all three. On managed
   Kubernetes that usually means NFS, EFS, Azure Files, or Filestore. On
   bare-metal clusters, Longhorn and Rook/CephFS both work. If your cluster
   only has `ReadWriteOnce`, you can pin both Deployments to the same node

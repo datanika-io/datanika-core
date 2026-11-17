@@ -188,14 +188,14 @@ if [ -n "${MISSING}" ]; then
 fi
 
 # ── Volume artifacts (core#970) ──────────────────────────────────────────────
-# backup-offsite.sh ships two encrypted volume tarballs beside the dump. Until
+# backup-offsite.sh ships one encrypted tarball per FILE_VOLUMES name. Until
 # core#970 this drill touched neither, so the dump was proven monthly and the
 # user data it REFERENCES was proven never. The tarballs have creation-time proof
 # — each ciphertext is round-tripped through `gpg --decrypt | cmp` before it ships
 # — but that proves the bytes were good on this box at 03:00. It says nothing
 # about whether the copy sitting on Aweb 29 days later still decrypts, which is
 # the exact failure this drill was built for after core#725.
-VOLUMES="datanika_uploaded_files datanika_dbt_projects"
+VOLUMES="datanika_uploaded_files datanika_dbt_projects datanika_duckdb_data"
 BACKUP_METRICS="${TEXTFILE_DIR}/datanika_backup.prom"
 
 echo "[$(date)] checking no plaintext volume archives remain off-site..."

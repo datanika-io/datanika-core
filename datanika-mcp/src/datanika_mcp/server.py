@@ -47,6 +47,10 @@ mcp = FastMCP(
         "dbt transformations, and monitor pipeline runs in Datanika. Sessions "
         "granted write access can also create resources and trigger runs."
     ),
+    # The public Streamable HTTP app reads these. Both default to False, which
+    # is the stateful mode GHSA-jpw9-pfvf-9f58 covers once a request is authenticated.
+    stateless_http=True,
+    json_response=True,
 )
 
 
@@ -469,8 +473,10 @@ async def trigger_transformation(transformation_id: int, wait: bool = False) -> 
 # session into the contextvar the tools resolve via ``_session()`` — the tool
 # bodies are unchanged and unaware of the transport.
 #
-# Stateless-JSON (SPEC §11.1): no per-session affinity to coordinate across
-# workers for a read-only P1; the caller is authenticated per request.
+# Stateless-JSON (SPEC §11.1). No per-session affinity across workers.
+# `stateless_http` is also the reason GHSA-jpw9-pfvf-9f58 does not apply:
+# the advisory covers stateful Streamable HTTP with authentication, and
+# `/mcp` authenticates every request outside the SDK's BearerAuthBackend.
 
 
 class _StreamableHTTPApp:
@@ -486,6 +492,31 @@ class _StreamableHTTPApp:
 
     async def __call__(self, scope, receive, send) -> None:
         await self._manager.handle_request(scope, receive, send)
+
+
+def lowlevel_mcp_server(fastmcp: object):
+    """Low-level server object ``StreamableHTTPSessionManager`` mounts.
+
+    ``streamable_http_app`` is the supported path and materializes that server
+    on the session manager. ``_mcp_server`` (this SDK) and ``_lowlevel_server``
+    (the mcp 2.x rename) are fallbacks, so neither private name is the only
+    path. This does not migrate the package to mcp 2.x.
+    """
+    streamable = getattr(fastmcp, "streamable_http_app", None)
+    if callable(streamable):
+        streamable()
+        try:
+            manager = fastmcp.session_manager
+        except RuntimeError:
+            manager = None
+        app = getattr(manager, "app", None)
+        if app is not None:
+            return app
+    for name in ("_mcp_server", "_lowlevel_server"):
+        server = getattr(fastmcp, name, None)
+        if server is not None:
+            return server
+    raise RuntimeError("FastMCP exposes no low-level server")
 
 
 def make_remote_transport() -> tuple[
@@ -505,10 +536,15 @@ def make_remote_transport() -> tuple[
     entered once per ``StreamableHTTPSessionManager`` instance, so each hosting
     app — and each test — gets its own.
     """
+    # `stateless` is load-bearing, not only a scaling choice. Flipping
+    # `settings.stateless_http` serves stateful sessions on an authenticated
+    # mount. GHSA-jpw9-pfvf-9f58's SDK mitigation is BearerAuthBackend, which
+    # this process does not use (see mcp_routes.py). SSE resumption and
+    # server-to-client requests need a decision here, not a silent flip.
     manager = StreamableHTTPSessionManager(
-        app=mcp._mcp_server,  # the low-level Server the FastMCP instance wraps
-        stateless=True,
-        json_response=True,
+        app=lowlevel_mcp_server(mcp),
+        stateless=mcp.settings.stateless_http,
+        json_response=mcp.settings.json_response,
     )
 
     @contextlib.asynccontextmanager

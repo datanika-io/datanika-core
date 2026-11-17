@@ -557,7 +557,9 @@ and `rest_api`'s Base URL.
     published guide says a blank falls back to Application Default Credentials, and
     `_bigquery_credentials` leaves the credential dict unchanged when the blob is empty. The key
     name was already `keyfile_json` ([core#565]). The runner still reads a stored
-    `service_account_json`. The other key renames in [core#1603] stay that issue's population.
+    `service_account_json`. The key names in [core#1603] are decided in
+    [`SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md`](SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md).
+    They stay out of this spec.
   - **`kafka` `group_id` — dropped from `required`.** The property stays and the form stays
     unmarked. The published guide and `_build_kafka_source` default a blank to `datanika-consumer`.
     The security fields stay optional for the reason already written on the schema.

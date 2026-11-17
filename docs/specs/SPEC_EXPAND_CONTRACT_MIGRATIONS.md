@@ -73,6 +73,7 @@ That splits every breaking change into phases across **separate releases**:
 | Narrowing a type | Old code writes wider values | Widen-only; narrow in a later release |
 | `DROP TABLE` still referenced | Old code queries it | Orphan it first, drop later |
 | Adding a `UNIQUE` constraint | Old code may write duplicates | Deduplicate + enforce in the app first |
+| Rename a key inside stored JSON the previous release reads (`connections.config_encrypted`) | Old code, still serving at t1 and on a worker that restarts later, reads the old key | Keep writing the old key and read both in release N. Stop writing the old key in N+1. The connection-schema decision is [`SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md`](SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md). |
 
 ### Renaming a column — the canonical worked example
 
@@ -85,6 +86,25 @@ Release N+1  contract : nothing reads `old_name` any more → drop it
 
 Three deploys, zero downtime. The tempting one-line `ALTER TABLE ... RENAME COLUMN` is a
 guaranteed `t1` outage.
+
+### A key inside stored JSON
+
+`connections.config_encrypted` holds the stored config. Renaming a key inside it has the same
+overlap as renaming a column. The previous release is still serving at t1, and
+the worker restarts separately, so it keeps reading the key it shipped with.
+
+Release N reads the old name and the new name, and keeps writing the old name.
+It may write the new name beside it. It does not rewrite existing rows, and it
+does not stop reading the old name.
+
+Release N+1, after release N is what production runs, writes only the new name
+and then stops reading the old name. Rewriting leftover rows belongs to that
+release.
+
+[`SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md`](SPEC_CONFIG_SCHEMA_KEY_DIRECTION.md)
+decides the [core#1603] schemas. That edit changes the document
+`openapi_inline` publishes. It does not write a new key into stored rows, so
+it does not open this window.
 
 ---
 

@@ -198,18 +198,15 @@ _CONNECTION_STATE = (
 #:
 #: 11 -> 10 on 2026-09-22 (core#1467): the REST API form stopped writing ``extra_headers`` and
 #: writes ``headers``, which ``CONFIG_SCHEMAS["rest_api"]`` now declares.
+#: 10 -> 5 on 2026-11-17 (core#1603): ``bucket_url``, ``uploaded_file_id``, ``instance_url``,
+#: ``spreadsheet_url`` and ``store`` are properties of the schemas the form already writes.
 _UNDECLARED_FORM_KEYS = frozenset(
     {
         "aws_access_key_id",
         "aws_secret_access_key",
-        "bucket_url",
         "endpoint_url",
-        "instance_url",
         "region_name",
-        "spreadsheet_url",
-        "store",
         "table_engine_type",
-        "uploaded_file_id",
     }
 )
 

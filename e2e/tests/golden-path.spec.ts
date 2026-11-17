@@ -6,7 +6,9 @@ import { test, expect, signUp } from "../fixtures/auth";
 import {
   createCsvConnection,
   createDuckDbConnection,
+  createTransformation,
   createUpload,
+  previewTransformation,
   runUploadAndAwait,
 } from "../fixtures/data";
 
@@ -176,3 +178,117 @@ test.describe("Golden path: signup → connection → pipeline → run @slow", (
     ).toBeGreaterThanOrEqual(CSV_ROWS);
   });
 });
+
+/**
+ * The load above is gating and stops once the CSV rows land. This describe is
+ * the transformation half, in the same browser session as its own load.
+ *
+ * Tier: INFORMATIONAL. A spec with no track record does not hold a promotion
+ * (`docs/QA_RULES.md` §10). The describe above stays gating; this marker is
+ * only on this describe, so `--grep-invert "@informational"` still runs the
+ * load. `@slow` because it signs up and waits on Celery, same as the load.
+ * The e2e-staging job sets `DATANIKA_E2E_SLOW`, so the informational run
+ * collects it.
+ *
+ * The rows asserted here are `amount * 10` (1000, 2000, 3000). The load's
+ * own row count cannot satisfy that: the CSV amounts are 100, 200 and 300.
+ *
+ * The `source()` pair is the one the upload writes. DuckDB has no destination
+ * dataset field, so the dataset is `to_snake_case(upload.name)` and the table
+ * is the uploaded file stem `orders` (`upload_tasks.py`).
+ */
+function datasetNameForUpload(uploadName: string): string {
+  return uploadName.trim().replace(/\s+/g, "_").toLowerCase();
+}
+
+test.describe(
+  "Load and transformation: CSV into DuckDB, then the multiplied rows @slow @informational",
+  () => {
+    test.setTimeout(480_000);
+
+    test("the load and the transformation run in one session and the preview shows the multiplied amounts", async ({
+      page,
+    }) => {
+      const stamp = `${Date.now()}`;
+      const destName = `qa xform dest ${stamp}`;
+      const srcName = `qa xform src ${stamp}`;
+      const uploadName = `qa xform upload ${stamp}`;
+      const modelName = `qa_xform_${stamp}`;
+
+      await test.step("1. sign up and reach the app", async () => {
+        await signUp(page);
+        await expect(page).toHaveURL(/\/(dashboard|connections|onboarding)?$/);
+        await expect(page.getByRole("link", { name: "Connections" }).first()).toBeVisible({
+          timeout: 10_000,
+        });
+      });
+
+      const savedDest = await test.step("2. create the DuckDB destination", async () =>
+        createDuckDbConnection(page, destName, `${SHARED_DIR}/qa_xform_${stamp}.duckdb`));
+
+      const savedSrc = await test.step("3. create the CSV source via the drop zone", async () => {
+        const csvPath = join(mkdtempSync(join(tmpdir(), "qa-xform-")), "orders.csv");
+        writeFileSync(csvPath, CSV_CONTENT, "utf8");
+        return createCsvConnection(page, srcName, csvPath);
+      });
+
+      const savedUpload = await test.step("4. wire them together as an Upload", async () =>
+        createUpload(
+          page,
+          uploadName,
+          { name: savedSrc, kind: "csv" },
+          { name: savedDest, kind: "duckdb" },
+        ));
+
+      const outcome = await test.step("5. run the load and read the terminal status", async () =>
+        runUploadAndAwait(page, savedUpload));
+
+      expect(outcome.status, "the load did not succeed, so there is nothing to transform").toBe(
+        "success",
+      );
+      expect(outcome.rows, "the load reported fewer rows than the CSV contains").toBeGreaterThanOrEqual(
+        CSV_ROWS,
+      );
+
+      const dataset = datasetNameForUpload(savedUpload);
+      const sql = [
+        "select id, name, amount * 10 as amount_x10",
+        `from {{ source('${dataset}', 'orders') }}`,
+      ].join("\n");
+
+      await test.step("6. save a transformation over that load", async () =>
+        createTransformation(page, modelName, { name: savedDest, kind: "duckdb" }, sql));
+
+      await test.step("7. preview it and read the multiplied amounts", async () => {
+        await previewTransformation(page, modelName);
+
+        const heading = page.getByRole("heading", { name: "Preview Result (LIMIT 5)" });
+        const complaint = page.getByText(/^(Compile failed:|Cannot preview:|Error:).*/);
+        await expect(heading.or(complaint.first())).toBeVisible({ timeout: 180_000 });
+        if (!(await heading.isVisible())) {
+          throw new Error(
+            `transformation preview did not return rows: ${((await complaint.first().textContent()) ?? "").trim()}`,
+          );
+        }
+
+        const table = page.getByRole("table").filter({
+          has: page.getByRole("columnheader", { name: "amount_x10" }),
+        });
+        await expect(
+          table,
+          "the preview table has no amount_x10 column — the model did not select the computed amount",
+        ).toBeVisible();
+        for (const amount of ["1000", "2000", "3000"]) {
+          await expect(
+            table.getByRole("cell", { name: new RegExp(`^\\s*${amount}(?:\\.0+)?\\s*$`) }),
+            `preview is missing the transformed amount ${amount}`,
+          ).toBeVisible();
+        }
+        await expect(
+          table.getByRole("cell", { name: /^\s*100\s*$/ }),
+          "the preview still shows the raw amount 100, so this is the load and not the transformation",
+        ).toHaveCount(0);
+      });
+    });
+  },
+);

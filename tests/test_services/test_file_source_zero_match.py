@@ -139,7 +139,7 @@ class TestConnectionTestActuallyTests:
         assert "is a file" in message
 
     def test_the_legacy_path_key_is_accepted(self, tmp_path):
-        """`CONFIG_SCHEMAS` declares `path`; live connections carry `bucket_url`."""
+        """A stored row may still carry `path`. The loader reads it. The schema does not."""
         _write_csv(tmp_path)
         ok, message = ConnectionService.test_connection({"path": str(tmp_path)}, ConnectionType.CSV)
         assert ok, message

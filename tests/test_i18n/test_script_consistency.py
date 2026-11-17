@@ -48,16 +48,14 @@ detecting it needs a list of verb forms, and a linguistic heuristic written by t
 same person who writes its fixtures is the shape this project has been burned by
 three times. It is on core#695 as a human review item.
 
-``xfail(strict=True)``: green on ``dev`` today so it holds no promotion, and it
-fails the moment the file is made consistent, in either direction, unless the
-marker goes with it.
+The strict ``xfail`` came off in the same change that converted the Latin-script
+Serbian values to Cyrillic (core#695). The assertion still passes in either
+direction. It fails if a later edit puts the other script back.
 """
 
 import json
 import re
 from pathlib import Path
-
-import pytest
 
 I18N = Path(__file__).resolve().parents[2] / "datanika" / "i18n"
 
@@ -148,14 +146,6 @@ class TestTheScriptGuardCanActuallyFail:
 
 
 class TestSerbianShipsInOneOrthography:
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "core#695: sr.json holds ~70 Latin-script Serbian values alongside "
-            "~550 Cyrillic ones, and they render on the same card. Awaiting a "
-            "Product call on which orthography ships. Remove this marker with it."
-        ),
-    )
     def test_no_screen_can_show_both_serbian_scripts(self):
         split = script_split("sr")
         cyrillic, latin = split["cyrillic"], split["latin"]

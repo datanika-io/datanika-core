@@ -26,7 +26,7 @@ from sqlalchemy import text
 from datanika.models.invitation import Invitation, InvitationStatus
 from datanika.models.notification_channel import ChannelType
 from datanika.models.pii import InvitationPII, NotificationChannelPII, UserPII
-from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import AuthService
 from datanika.services.invitation_service import InvitationService, hash_invitation_token
 from datanika.services.notification_service import NotificationService
@@ -62,18 +62,17 @@ class TestExtraction:
         assert pii is not None, "register_user did not dual-write user_pii"
         assert pii.email == "alice@example.com"
         assert pii.full_name == "Alice Adams"
-        # Release N still writes the legacy columns: the previously deployed code reads
-        # them through the blue/green swap. N+1 stops; N+2 drops.
-        assert user.email == "alice@example.com"
+        # N+1 stops writing the legacy columns. N+2 drops them.
+        assert user.email is None
+        assert user.full_name is None
 
     def test_every_active_user_has_exactly_one_pii_row(self, svc, db_session):
         """Criterion 2 — the count check the N backfill has to satisfy.
 
         ⚠️ Scoped to **the rows this test created**, not to the whole table. The first
         version compared `count(users)` against `count(user_pii)` globally; it passed in
-        isolation and failed in the full run, because other files legitimately insert
-        `User` rows directly (and one in this very file does so on purpose, to reproduce
-        the t1 window). A guard whose verdict depends on what else ran is not a guard —
+        isolation and failed in the full run, because other files insert `User` rows
+        directly. A guard whose verdict depends on what else ran is not a guard —
         and this one's failure would have read as "the dual-write is broken".
         """
         created = [
@@ -97,27 +96,6 @@ class TestExtraction:
         user.deleted_at = __import__("datetime").datetime.now(__import__("datetime").UTC)
         db_session.flush()
         assert svc.get_user_by_email(db_session, "alice@example.com") is None
-
-    def test_the_legacy_column_is_still_readable_during_the_dual_write_window(
-        self, svc, db_session
-    ):
-        """The t1 window, which is the reason `get_user_by_email` reads BOTH columns.
-
-        At the blue/green swap the previously deployed container is still registering
-        people, and it writes `users.email` with no `user_pii` row. A join-only read would
-        leave every account created during the swap unable to sign in — a failure that
-        appears only in production, only during a deploy, and only for the users who
-        arrived in that window.
-        """
-        user = User(
-            email="t1-window@example.com",
-            password_hash="x",
-            full_name="Swap Window",
-        )
-        db_session.add(user)
-        db_session.flush()
-        assert db_session.get(UserPII, user.id) is None, "precondition: no sidecar row"
-        assert svc.get_user_by_email(db_session, "t1-window@example.com") is not None
 
     def test_new_org_slug_carries_no_part_of_the_name(self, svc, db_session):
         """Criterion 5. §2c measured `organizations.slug` holding a live `users.full_name`
@@ -144,7 +122,8 @@ class TestInvitationTokenHashing:
         inv = inv_svc.create_invitation(
             db_session, org.id, "Invitee@Example.com", MemberRole.EDITOR, owner.id
         )
-        assert inv.token_hash == hash_invitation_token(inv.token)
+        assert inv.token is None
+        assert inv.token_hash == hash_invitation_token(inv.plaintext_token)
         assert len(inv.token_hash) == 64
 
         pii = db_session.get(InvitationPII, inv.id)
@@ -158,7 +137,7 @@ class TestInvitationTokenHashing:
         inv = inv_svc.create_invitation(
             db_session, org.id, "joiner@example.com", MemberRole.EDITOR, owner.id
         )
-        raw = inv.token
+        raw = inv.plaintext_token
         found = inv_svc.get_invitation_by_token(db_session, raw)
         assert found is not None and found.id == inv.id
 
@@ -175,6 +154,7 @@ class TestNotificationChannelExtraction:
             events=["run_failure"],
             actor_user_id=owner.id,
         )
+        assert "email" not in (ch.config or {})
         pii = db_session.get(NotificationChannelPII, ch.id)
         assert pii is not None and pii.recipient == "alerts@example.com"
 

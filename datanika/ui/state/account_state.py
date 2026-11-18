@@ -80,7 +80,8 @@ class AccountState(BaseState):
             if user is not None:
                 self.has_password = UserService.has_usable_password(user)
                 self.email_verified = bool(user.email_verified)
-                self.account_email = user.email or ""
+                email, _name = UserService.account_address(session, user)
+                self.account_email = email or ""
                 pii = UserService.get_user_pii(session, user.id)
                 self.pending_email = (
                     "" if pii is None or not pii.pending_email else pii.pending_email
@@ -99,12 +100,13 @@ class AccountState(BaseState):
         caller that drops its return value produces a screen on which a failed
         send and a successful one are the same event.
 
-        **What this is aimed at.** The destination is re-read from the ``User``
-        row, never taken from ``account_email`` or any other state var, so the
-        worst a signed-in caller can do is mail themselves. The issue's note
-        about "any address a signed-in user can name" describes a design where
-        the address is an input; this is deliberately not that design, and
-        ``test_the_address_comes_from_the_user_row`` keeps it that way.
+        **What this is aimed at.** The destination is re-read from the stored
+        account address, never taken from ``account_email`` or any other state
+        var, so the worst a signed-in caller can do is mail themselves. The
+        issue's note about "any address a signed-in user can name" describes a
+        design where the address is an input; this is deliberately not that
+        design, and ``test_the_address_comes_from_the_user_row`` keeps it that
+        way. ``email_verified`` still ends the resend; it does not gate a change.
 
         **The limiter fails closed**, unlike ``concurrency_service``, which
         degrades to a default when its hook raises. That asymmetry is
@@ -125,7 +127,7 @@ class AccountState(BaseState):
                 # report and no action to offer, and the control is not
                 # rendered for a verified account in the first place.
                 return
-            email = user.email
+            email, _name = UserService.account_address(session, user)
 
         try:
             allowed = (

@@ -123,7 +123,7 @@ def _signed_in(auth_svc, u, org, *, access_minutes=10):
     return _auth(
         access_token=auth_svc.create_access_token(u.id, org.id, expires_minutes=access_minutes),
         refresh_token=auth_svc.create_refresh_token(u.id),
-        current_user=UserInfo(id=u.id, email=u.email, full_name=u.full_name),
+        current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
         current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
         current_role="owner",
     )

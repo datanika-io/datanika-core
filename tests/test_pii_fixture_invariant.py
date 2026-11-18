@@ -16,17 +16,15 @@ So *"the suite is green under N+1"* would have licensed every one of them. The r
 prefer a source guard is not thoroughness; it is that the dynamic evidence **cannot
 distinguish a fixture that is correct from one nothing exercises.**
 
-**Why an allowlist rather than a ban.** Two sites are deliberately sidecar-less and
-deleting them would revert a release. They are named below with the reason, so an
-implementer sweeping this file finds the argument at the site rather than in an issue.
+**Why an allowlist rather than a ban.** Release N kept two sidecar-less fixtures
+because deleting them would have reverted that release. N+1 deletes both, and
+``ALLOWED`` is empty. Re-adding an entry exempts a file from the scan.
 """
 
 from __future__ import annotations
 
 import ast
 import pathlib
-
-import pytest
 
 TESTS = pathlib.Path(__file__).resolve().parent
 
@@ -35,20 +33,7 @@ TESTS = pathlib.Path(__file__).resolve().parent
 #: 🚨 Every entry here is a **deliberate** violation of the dual-write invariant. Adding
 #: one to silence a failure reintroduces core#1009. Adding one because a test genuinely
 #: needs a sidecar-less row is correct — say which row, and why, in the value.
-ALLOWED: dict[str, str] = {
-    "test_services/test_pii_separation.py": (
-        "§8a.4 Kind 1 — `test_the_legacy_column_is_still_readable_during_the_dual_write_window` "
-        "builds a sidecar-less user ON PURPOSE and asserts `get_user_by_email` still finds it "
-        "through the legacy `or_` half. That is the t1 blue/green window guard. core#939 "
-        "DELETES this test in N+1; an implementer who 'fixes' it has reverted release N."
-    ),
-    "test_services/test_invitation_service.py": (
-        "core#1010's regression test needs a user with an active `Membership` and NO sidecar — "
-        "that is the precondition `create_invitation`'s already-a-member guard fails open on. "
-        "Routing it through `make_user` gives the guard something to find, the test passes, and "
-        "the defect's only witness is gone again (core#1009, measured: 18 reds -> 1)."
-    ),
-}
+ALLOWED: dict[str, str] = {}
 
 #: Model classes whose construction must be accompanied by a sidecar write.
 GUARDED = {"User", "Invitation"}
@@ -191,22 +176,14 @@ def test_the_detector_matches_a_bare_construction_and_not_its_sidecar():
         negative.unlink()
 
 
-@pytest.mark.parametrize("rel", sorted(ALLOWED))
-def test_every_allowlisted_file_still_exists_and_still_needs_the_exemption(rel: str):
-    """An allowlist that outlives its reason silently stops guarding a file.
+def test_the_allowlist_is_empty_after_n1():
+    """N+1 retires both deliberate sidecar-less fixtures (core#939).
 
-    ⚠️ ``test_invitation_service.py`` is listed for a test core#1010 has **not yet
-    written**, so its entry is asserted to exist as a *file*, not to contain a bare
-    construction. When #1010 lands, that entry starts carrying its weight; if #1010 is
-    solved another way, delete the entry rather than leaving a whole module unguarded.
+    An empty ``parametrize`` collects zero cases and would stay green if a file
+    were exempted again. A non-empty dict fails here, and the scan above then
+    names the construction.
     """
-    path = TESTS / rel
-    assert path.exists(), (
-        f"{rel} is allowlisted in this file and does not exist. Delete the entry — an "
-        "allowlist keyed on a path that has moved exempts nothing and hides that it "
-        "exempts nothing."
-    )
-    assert ALLOWED[rel].strip(), f"{rel} is exempt with no stated reason"
+    assert ALLOWED == {}
 
 
 def test_the_factory_module_is_the_only_place_that_writes_the_sidecars():

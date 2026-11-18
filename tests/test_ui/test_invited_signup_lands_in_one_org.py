@@ -96,7 +96,7 @@ def _invite(db_session, auth, inviting_org, *, email=INVITEE_EMAIL) -> str:
         inviting_org.owner_id,
     )
     db_session.flush()
-    return inv.token
+    return inv.plaintext_token
 
 
 class _SignupState:
@@ -195,7 +195,10 @@ def _run_signup(db_session, auth, *, invite_token="", email=INVITEE_EMAIL) -> _S
 
 
 def _orgs_and_memberships(db_session, email: str):
-    user = db_session.query(User).filter(User.email == email).one()
+    from datanika.models.pii import UserPII
+
+    pii = db_session.query(UserPII).filter(UserPII.email == email).one()
+    user = db_session.get(User, pii.user_id)
     memberships = (
         db_session.query(Membership)
         .filter(Membership.user_id == user.id, Membership.deleted_at.is_(None))

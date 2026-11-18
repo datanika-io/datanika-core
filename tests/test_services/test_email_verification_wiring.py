@@ -37,6 +37,15 @@ def user_svc(auth):
     return UserService(auth)
 
 
+def _account_email(db_session, user) -> str:
+    """The address signup mails. N+1 stores it on the sidecar, not ``users.email``."""
+    from datanika.models.pii import UserPII
+
+    pii = db_session.get(UserPII, user.id)
+    assert pii is not None and pii.email
+    return pii.email
+
+
 class TestPasswordResetProvesTheAddress:
     """Completing a reset is proof of inbox control, so it must record that."""
 
@@ -104,9 +113,10 @@ class TestSignupSendsTheVerificationMail:
         )
 
         user = user_svc.register_user(db_session, "fresh@example.com", "password123", "Fresh")
+        address = _account_email(db_session, user)
 
         with patch("datanika.tasks.email_tasks.send_verification_email_task") as task:
-            sent = request_email_verification(user.id, user.email, auth, smtp_host="smtp.test")
+            sent = request_email_verification(user.id, address, auth, smtp_host="smtp.test")
 
         assert sent is VerificationMailResult.QUEUED
         task.delay.assert_called_once()
@@ -132,7 +142,9 @@ class TestSignupSendsTheVerificationMail:
         user = user_svc.register_user(db_session, "nosmtp@example.com", "password123", "No SMTP")
 
         with patch("datanika.tasks.email_tasks.send_verification_email_task") as task:
-            sent = request_email_verification(user.id, user.email, auth, smtp_host="")
+            sent = request_email_verification(
+                user.id, _account_email(db_session, user), auth, smtp_host=""
+            )
 
         assert sent is VerificationMailResult.NO_RELAY
         task.delay.assert_not_called()
@@ -152,7 +164,9 @@ class TestSignupSendsTheVerificationMail:
 
         with patch("datanika.tasks.email_tasks.send_verification_email_task") as task:
             task.delay.side_effect = OSError("broker unreachable")
-            sent = request_email_verification(user.id, user.email, auth, smtp_host="smtp.test")
+            sent = request_email_verification(
+                user.id, _account_email(db_session, user), auth, smtp_host="smtp.test"
+            )
 
         assert sent is VerificationMailResult.FAILED
 
@@ -188,7 +202,7 @@ class TestVerifyEmailRouteStillClosesTheLoop:
 
         user = user_svc.register_user(db_session, "loop@example.com", "password123", "Loop")
         db_session.flush()
-        token = auth.create_email_verification_token(user.id, user.email)
+        token = auth.create_email_verification_token(user.id, _account_email(db_session, user))
 
         @contextlib.contextmanager
         def _session():

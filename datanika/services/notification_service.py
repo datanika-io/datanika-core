@@ -45,6 +45,22 @@ def _validate_config(ct, config):
             raise UserFacingError(f"config.{f} is required for {ct} channels")
 
 
+def _split_recipient(channel_type, config):
+    """Keep secrets in the JSON column. The recipient is personal data.
+
+    Validation sees the caller's dict. The stored copy has ``email`` or
+    ``chat_id`` removed, and that value is returned for the sidecar.
+    """
+    _validate_config(channel_type, config)
+    stored = dict(config)
+    recipient = None
+    if channel_type == ChannelType.EMAIL:
+        recipient = stored.pop("email", None)
+    elif channel_type == ChannelType.TELEGRAM:
+        recipient = stored.pop("chat_id", None)
+    return stored, recipient
+
+
 def _validate_events(events):
     bad = set(events) - VALID_EVENTS
     if bad:
@@ -66,41 +82,33 @@ class NotificationService:
         )
         if not name or not name.strip():
             raise UserFacingError("Channel name cannot be empty")
-        _validate_config(channel_type, config)
+        stored, recipient = _split_recipient(channel_type, config)
         _validate_events(events)
         ch = NotificationChannel(
             org_id=org_id,
             name=name.strip(),
             channel_type=channel_type,
-            config=config,
+            config=stored,
             events=events,
             is_active=True,
         )
         session.add(ch)
         session.flush()
-        self._sync_channel_pii(session, ch)
+        self._sync_channel_pii(session, ch, recipient)
         return ch
 
     @staticmethod
-    def _sync_channel_pii(session, ch) -> None:
-        """Mirror the delivery address into ``notification_channel_pii`` (release N).
+    def _sync_channel_pii(session, ch, recipient) -> None:
+        """Write the delivery address onto ``notification_channel_pii``.
 
-        ``config`` mixes a **personal datum** with **secrets** in one JSON column — the
-        recipient sits beside the Slack webhook URL and the Telegram bot token. Only the
-        recipient moves: secrets are an org property, not personal data, and folding them
-        in would imply that erasure must decrypt them, which it must not.
+        ``config`` mixes a personal datum with secrets. Only the recipient moves.
+        Secrets stay in the JSON. New writes do not copy the recipient back into
+        ``config``. Rows stored before this release can still carry one; removing
+        that copy is a later data step, not this one.
 
-        Dual-write. ``config`` keeps its copy through N because the previously deployed
-        code reads ``channel.config["email"]`` directly.
-
-        ⚠️ Unlike the other two sidecars, **the spec's §4 contract release never removes
-        this copy** — it drops five *columns* and says nothing about the JSON, so without a
-        data step in N+1/N+2 the address stays in ``config`` after the chain finishes.
-        Raised on core#655; recorded here because this is where the second copy is made.
+        ``recipient`` is the value just validated. Reading it back off ``config``
+        would delete the sidecar on an update that did not include a config.
         """
-        recipient = None
-        if isinstance(ch.config, dict):
-            recipient = ch.config.get("email") or ch.config.get("chat_id")
         existing = session.get(NotificationChannelPII, ch.id)
         if not recipient:
             if existing is not None:
@@ -108,9 +116,9 @@ class NotificationService:
                 session.flush()
             return
         if existing is None:
-            session.add(NotificationChannelPII(channel_id=ch.id, recipient=recipient))
+            session.add(NotificationChannelPII(channel_id=ch.id, recipient=str(recipient)))
         else:
-            existing.recipient = recipient
+            existing.recipient = str(recipient)
         session.flush()
 
     def _get_channel(self, session, channel_id, org_id):
@@ -167,16 +175,20 @@ class NotificationService:
             if not n or not str(n).strip():
                 raise UserFacingError("Channel name cannot be empty")
             ch.name = str(n).strip()
+        recipient = None
+        config_changed = False
         if "config" in kwargs:
-            _validate_config(ch.channel_type, kwargs["config"])
-            ch.config = kwargs["config"]
+            stored, recipient = _split_recipient(ch.channel_type, kwargs["config"])
+            ch.config = stored
+            config_changed = True
         if "events" in kwargs:
             _validate_events(kwargs["events"])
             ch.events = kwargs["events"]
         if "is_active" in kwargs:
             ch.is_active = kwargs["is_active"]
         session.flush()
-        self._sync_channel_pii(session, ch)
+        if config_changed:
+            self._sync_channel_pii(session, ch, recipient)
         return ch
 
     def delete_channel(self, session, channel_id, org_id, *, actor_user_id: int):
@@ -199,7 +211,7 @@ class NotificationService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _redact(text, channel) -> str:
+    def _redact(text, channel, extras=()) -> str:
         """Strip every secret this channel holds out of an error string.
 
         ``httpx`` puts the request URL in the message of every ``HTTPStatusError``
@@ -214,7 +226,10 @@ class NotificationService:
         # (a Telegram `chat_id` inside its own bot token, say), replacing the
         # short one first breaks up the long one so its own pass no longer
         # matches — leaving most of the longer secret sitting in the column.
-        for value in sorted((v for v in config.values() if v), key=lambda v: -len(str(v))):
+        # ``extras`` is the sidecar recipient, which is no longer in ``config``.
+        values = [v for v in config.values() if v]
+        values.extend(v for v in extras if v)
+        for value in sorted(values, key=lambda v: -len(str(v))):
             out = out.replace(str(value), "[redacted]")
         if len(out) > MAX_LAST_ERROR:
             out = out[: MAX_LAST_ERROR - 3] + "..."
@@ -230,7 +245,12 @@ class NotificationService:
         try:
             channel.last_attempt_at = datetime.now(UTC)
             channel.last_status = str(status)
-            channel.last_error = self._redact(error, channel) if error else None
+            extras = ()
+            if error:
+                pii = session.get(NotificationChannelPII, channel.id)
+                if pii is not None and pii.recipient:
+                    extras = (pii.recipient,)
+            channel.last_error = self._redact(error, channel, extras) if error else None
             session.flush()
         except Exception:
             logger.exception("Could not record delivery state for channel %s", channel.id)
@@ -256,7 +276,9 @@ class NotificationService:
             if event_type not in ch.events:
                 continue
             try:
-                status, detail = self._dispatch(ch, event_type, payload)
+                pii = session.get(NotificationChannelPII, ch.id)
+                recipient = pii.recipient if pii is not None else None
+                status, detail = self._dispatch(ch, event_type, payload, recipient)
                 # ⚠️ A `None` status means "the outcome is not mine to record" —
                 # the email path hands the row to the Celery task, which knows
                 # whether the message actually left. Recording here anyway
@@ -277,20 +299,20 @@ class NotificationService:
                     session, ch, DeliveryStatus.FAILED, f"{type(exc).__name__}: {exc}"
                 )
 
-    def _dispatch(self, channel, event_type, payload):
+    def _dispatch(self, channel, event_type, payload, recipient=None):
         """Return ``(status, detail)``. Raising is also allowed — ``notify``
         records that as a failure with the exception as the detail."""
         if channel.channel_type == ChannelType.EMAIL:
-            return self._dispatch_email(channel, event_type, payload)
+            return self._dispatch_email(channel, event_type, payload, recipient)
         if channel.channel_type == ChannelType.SLACK:
             return self._dispatch_slack(channel, event_type, payload)
         if channel.channel_type == ChannelType.TELEGRAM:
-            return self._dispatch_telegram(channel, event_type, payload)
+            return self._dispatch_telegram(channel, event_type, payload, recipient)
         if channel.channel_type == ChannelType.WEBHOOK:
             return self._dispatch_webhook(channel, event_type, payload)
         return DeliveryStatus.SKIPPED, f"unknown channel type {channel.channel_type!r}"
 
-    def _dispatch_email(self, channel, event_type, payload):
+    def _dispatch_email(self, channel, event_type, payload, recipient):
         """Hand the message to the mail task, synchronously enough to report.
 
         Dispatch runs inside the run-completion hook, which runs inside the
@@ -313,7 +335,9 @@ class NotificationService:
             )
             return DeliveryStatus.SKIPPED, "SMTP is not configured on this deployment"
 
-        to = channel.config["email"]
+        if not recipient:
+            return DeliveryStatus.FAILED, "recipient is not configured"
+        to = recipient
         if event_type == "quota_warning":
             subject, body = _build_quota_warning_email(payload)
         elif event_type == "charge_incoming":
@@ -348,9 +372,11 @@ class NotificationService:
                 text += "\n> " + error
         return _post(webhook_url, {"text": text})
 
-    def _dispatch_telegram(self, channel, event_type, payload):
+    def _dispatch_telegram(self, channel, event_type, payload, recipient):
         token = channel.config["token"]
-        chat_id = channel.config["chat_id"]
+        if not recipient:
+            return DeliveryStatus.FAILED, "recipient is not configured"
+        chat_id = recipient
         if event_type == "quota_warning":
             text = _build_quota_warning_telegram_text(payload)
         elif event_type == "charge_incoming":

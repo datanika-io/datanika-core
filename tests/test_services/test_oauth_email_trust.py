@@ -362,7 +362,10 @@ class TestFindOrCreateOAuthUserTrust:
         assert is_new is False
         assert linked.id == password_user.id
         assert linked.oauth_provider == "github"
-        assert linked.oauth_provider_id == "victim-subject"
+        from datanika.models.pii import UserPII
+
+        assert linked.oauth_provider_id is None
+        assert db_session.get(UserPII, linked.id).oauth_provider_id == "victim-subject"
 
     def test_legacy_row_without_subject_is_bound_late(self, user_svc, db_session, auth):
         """Rows linked before the subject was recorded must not lock the user out."""
@@ -381,7 +384,10 @@ class TestFindOrCreateOAuthUserTrust:
         )
         assert is_new is False
         assert found.id == u.id
-        assert found.oauth_provider_id == "sub-late"
+        from datanika.models.pii import UserPII
+
+        assert found.oauth_provider_id is None
+        assert db_session.get(UserPII, found.id).oauth_provider_id == "sub-late"
 
     def test_empty_subject_does_not_match_everyone(self, user_svc, db_session, auth):
         """An empty provider_id must never be used as a lookup key."""

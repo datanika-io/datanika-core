@@ -155,7 +155,7 @@ class TestExpiryIsEnforced:
         st = _state(
             access_token=expired,
             refresh_token=auth.create_refresh_token(u.id),
-            current_user=UserInfo(id=u.id, email=u.email, full_name=u.full_name),
+            current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
             current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
         )
         with (
@@ -185,7 +185,7 @@ class TestExpiryIsEnforced:
         st = _state(
             access_token=auth.create_access_token(u.id, first_org.id, expires_minutes=-1),
             refresh_token=auth.create_refresh_token(u.id),
-            current_user=UserInfo(id=u.id, email=u.email, full_name=u.full_name),
+            current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
             current_org=OrgInfo(id=first_org.id, name=first_org.name, slug=first_org.slug),
         )
         with (
@@ -208,7 +208,7 @@ class TestPasswordChangeEndsOtherSessions:
         st = _state(
             access_token=auth.create_access_token(u.id, org.id, expires_minutes=-1),
             refresh_token=auth.create_refresh_token(u.id),
-            current_user=UserInfo(id=u.id, email=u.email, full_name=u.full_name),
+            current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
             current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
         )
         u.password_changed_at = datetime.now(UTC) + timedelta(minutes=5)
@@ -225,7 +225,7 @@ class TestPasswordChangeEndsOtherSessions:
         st = _state(
             access_token="stale",
             refresh_token="stale",
-            current_user=UserInfo(id=u.id, email=u.email, full_name="Alice"),
+            current_user=UserInfo(id=u.id, email=u.email or "", full_name="Alice"),
             current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
             user_orgs=[OrgInfo(id=org.id, name=org.name, slug=org.slug)],
             current_role="owner",
@@ -288,7 +288,7 @@ class TestOrgSwitchCannotOutliveTheSession:
         st = _state(
             access_token=auth.create_access_token(u.id, org.id, expires_minutes=-1),
             refresh_token="not-a-token",
-            current_user=UserInfo(id=u.id, email=u.email, full_name=u.full_name),
+            current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
             current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
         )
         before = st.access_token

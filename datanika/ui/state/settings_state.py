@@ -137,12 +137,16 @@ class SettingsState(BaseState):
             for m in members:
                 user = svc.get_user(session, m.user_id)
                 is_self = m.user_id == self.current_user_id
+                if user is not None:
+                    member_email, member_name = UserService.account_address(session, user)
+                else:
+                    member_email, member_name = "", ""
                 self.members.append(
                     MemberItem(
                         id=m.id,
                         user_id=m.user_id,
-                        email=user.email if user else "",
-                        full_name=user.full_name if user else "",
+                        email=member_email or "",
+                        full_name=member_name or "",
                         role=m.role.value,
                         is_self=is_self,
                         can_manage=(
@@ -285,13 +289,14 @@ class SettingsState(BaseState):
                     resource_id=invitation.id,
                     new_values={"invitation_id": invitation.id, "role": self.invite_role},
                 )
+                raw_token = invitation.plaintext_token
                 session.commit()
 
                 send_invitation_email_task.delay(
                     self.invite_email,
                     auth_state.current_org.name,
                     auth_state.current_user.full_name or auth_state.current_user.email,
-                    invitation.token,
+                    raw_token,
                 )
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to send invitation")

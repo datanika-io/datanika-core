@@ -141,12 +141,15 @@ class TestTheWholePathReachesTheWire:
         user = UserService(auth).register_user(
             db_session, "wire@example.com", "password123", "Wire"
         )
+        from datanika.models.pii import UserPII
+
+        address = db_session.get(UserPII, user.id).email
 
         # `.delay` is the only thing swapped for eager execution: the broker is
         # not the system under test, everything downstream of it is.
         with patch.object(send_verification_email_task, "delay", send_verification_email_task):
             queued = request_email_verification(
-                user.id, user.email, auth, smtp_host=smtp_settings.smtp_host
+                user.id, address, auth, smtp_host=smtp_settings.smtp_host
             )
 
         assert queued is VerificationMailResult.QUEUED
@@ -184,12 +187,15 @@ class TestTheWholePathReachesTheWire:
         user = UserService(auth).register_user(
             db_session, "downrelay@example.com", "password123", "Down"
         )
+        from datanika.models.pii import UserPII
+
+        address = db_session.get(UserPII, user.id).email
 
         with patch("datanika.services.email_service.smtplib.SMTP") as smtp_cls:
             smtp_cls.side_effect = OSError("connection refused")
             with patch.object(send_verification_email_task, "delay", send_verification_email_task):
                 request_email_verification(
-                    user.id, user.email, auth, smtp_host=smtp_settings.smtp_host
+                    user.id, address, auth, smtp_host=smtp_settings.smtp_host
                 )
             assert smtp_cls.return_value.__enter__.return_value.sendmail.call_count == 0
 

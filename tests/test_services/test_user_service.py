@@ -81,12 +81,18 @@ class TestRegisterUser:
         u = svc.register_user(db_session, "alice@example.com", "alice password", "Alice")
         assert isinstance(u, User)
         assert isinstance(u.id, int)
-        assert u.full_name == "Alice"
+        assert u.full_name is None
         assert u.password_hash != "secret"
+        from datanika.models.pii import UserPII
+
+        assert db_session.get(UserPII, u.id).full_name == "Alice"
 
     def test_email_lowercased(self, svc, db_session):
         u = svc.register_user(db_session, "ALICE@EXAMPLE.COM", "alice password", "Alice")
-        assert u.email == "alice@example.com"
+        from datanika.models.pii import UserPII
+
+        assert u.email is None
+        assert db_session.get(UserPII, u.id).email == "alice@example.com"
 
     def test_is_active_default(self, svc, db_session):
         u = svc.register_user(db_session, "alice@example.com", "alice password", "Alice")
@@ -517,9 +523,14 @@ class TestFindOrCreateOAuthUser:
             db_session, "new_oauth@test.com", "OAuth User", "github", "gh456", email_verified=True
         )
         assert is_new is True
-        assert result_user.email == "new_oauth@test.com"
+        from datanika.models.pii import UserPII
+
+        assert result_user.email is None
         assert result_user.oauth_provider == "github"
-        assert result_user.oauth_provider_id == "gh456"
+        assert result_user.oauth_provider_id is None
+        pii = db_session.get(UserPII, result_user.id)
+        assert pii.email == "new_oauth@test.com"
+        assert pii.oauth_provider_id == "gh456"
 
         # Verify org was created
         orgs = svc.get_user_orgs(db_session, result_user.id)
@@ -532,5 +543,8 @@ class TestFindOrCreateOAuthUser:
         svc.find_or_create_oauth_user(
             db_session, user.email, "Existing", "google", "g789", email_verified=True
         )
+        from datanika.models.pii import UserPII
+
         assert user.oauth_provider == "google"
-        assert user.oauth_provider_id == "g789"
+        assert user.oauth_provider_id is None
+        assert db_session.get(UserPII, user.id).oauth_provider_id == "g789"

@@ -895,6 +895,9 @@ class ConnectionState(BaseState):
     def set_form_extra_headers(self, value: str):
         self._set_config_field("form_extra_headers", value)
 
+    def set_form_rest_auth(self, value: str):
+        self._set_config_field("form_rest_auth", value)
+
     def set_form_openapi_spec(self, value: str):
         self._set_config_field("form_openapi_spec", value)
 
@@ -912,6 +915,9 @@ class ConnectionState(BaseState):
 
     def set_form_cluster_replication(self, value: bool):
         self._set_config_field("form_cluster_replication", value)
+
+    def set_form_table_engine_type(self, value: str):
+        self._set_config_field("form_table_engine_type", value)
 
     def set_form_secure(self, value: bool):
         self._set_config_field("form_secure", value)

@@ -168,6 +168,12 @@ class WorkflowState:
     #: The workflow RECORD exists and is listed by the API, but its file is not on
     #: the default branch. See :func:`default_branch_workflow_paths` (core#982).
     file_missing: bool = False
+    #: Committer date of the commit that put the current ``schedule:`` block on
+    #: the default branch (core#1243). ``created_at`` is when GitHub registered
+    #: the file, which can be months earlier. Set only for a workflow that has
+    #: never fired; fired workflows do not need it. Comparator tests that leave
+    #: it unset are graded from ``created_at``.
+    schedule_introduced_at: datetime | None = None
 
     @property
     def ref(self) -> str:
@@ -313,21 +319,24 @@ def find_problems(
         budget = min(known) + grace
 
         if wf.last_schedule_run is None:
-            age = (now - wf.created_at).total_seconds()
+            # core#1243. created_at is file registration, not the schedule.
+            introduced = wf.schedule_introduced_at or wf.created_at
+            age = (now - introduced).total_seconds()
             if age > budget:
                 problems.append(
                     f"{wf.ref} is `active` and has **never** run on a `schedule` "
-                    f"event, {age / HOUR:.1f}h after it was created. Expected a "
+                    f"event, {age / HOUR:.1f}h after its schedule: block reached "
+                    f"the DEFAULT branch. Expected a "
                     f"fire within {budget / HOUR:.0f}h ({min(known) / HOUR:.0f}h "
                     f"period + {grace / HOUR:.0f}h grace). The schedule most "
-                    f"likely never registered -- check the file is on the "
+                    f"likely never registered -- check that commit is on the "
                     f"DEFAULT branch."
                 )
             else:
                 notes.append(
-                    f"{wf.ref}: created {age / HOUR:.1f}h ago and has not fired "
-                    f"yet. Too new to judge -- still inside the "
-                    f"{budget / HOUR:.0f}h budget."
+                    f"{wf.ref}: schedule: reached the DEFAULT branch "
+                    f"{age / HOUR:.1f}h ago and has not fired yet. Too new to "
+                    f"judge -- still inside the {budget / HOUR:.0f}h budget."
                 )
             continue
 
@@ -467,7 +476,16 @@ def _last_schedule_run(repo: str, workflow_id: int | str) -> tuple[datetime | No
     runs = json.loads(
         _gh("api", f"repos/{repo}/actions/workflows/{workflow_id}/runs?event=schedule&per_page=5")
     )
-    latest = runs.get("workflow_runs") or []
+    # core#1243. `.get("workflow_runs") or []` turns a 200 whose JSON simply lacks
+    # the key into "never fired". An empty list is a workflow with no schedule
+    # runs. A missing key is a body this check cannot grade.
+    if not isinstance(runs, dict) or "workflow_runs" not in runs:
+        raise RuntimeError(
+            f"{repo} workflow {workflow_id}: schedule-runs response has no "
+            f"'workflow_runs' key. That is not an empty run list, and it must not "
+            f"be read as never fired."
+        )
+    latest = runs["workflow_runs"] or []
     if not latest:
         return None, []
     # Only COMPLETED runs carry a verdict. An in-progress run has conclusion null,
@@ -492,6 +510,65 @@ def _parse_crons(repo: str, path: str, ref: str) -> list[str]:
         return []
     schedule = triggers.get("schedule") or []
     return [e["cron"] for e in schedule if isinstance(e, dict) and e.get("cron")]
+
+
+def _schedule_introduced_at(repo: str, path: str, ref: str) -> datetime:
+    """Committer date of the commit that put the current schedule on ``ref``.
+
+    The commits API returns newest first. Walk while the file still has a
+    ``schedule:`` block and stop at the first commit that does not. The oldest
+    commit of that newest contiguous run is the one that added the block that is
+    on the branch now. A block that was removed and added again is aged from the
+    re-add, not from the original.
+
+    A body that is not that history raises. Falling back to ``created_at`` is
+    the bug this function exists to close (core#1243).
+    """
+    raw = _gh(
+        "api",
+        f"repos/{repo}/commits?path={path}&sha={ref}&per_page=100",
+        "--paginate",
+        "--jq",
+        ".[] | {sha: .sha, date: .commit.committer.date}",
+    )
+    commits: list[dict] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            item = None
+        if not isinstance(item, dict) or "sha" not in item or not item.get("date"):
+            raise RuntimeError(
+                f"{repo} :: {path}: schedule history on {ref} is not commit "
+                f"records. Refusing to age a never-fired workflow from created_at."
+            )
+        commits.append(item)
+    if not commits:
+        raise RuntimeError(
+            f"{repo} :: {path}: no commits on {ref} touch this file. "
+            f"Refusing to age a never-fired workflow from created_at."
+        )
+    introduced: dict | None = None
+    for commit in commits:
+        if _parse_crons(repo, path, commit["sha"]):
+            introduced = commit
+            continue
+        break
+    if introduced is None:
+        raise RuntimeError(
+            f"{repo} :: {path}: the default branch has a schedule but no commit "
+            f"on {ref} contains one. Refusing to age it from created_at."
+        )
+    when = _ts(introduced["date"])
+    if when is None:
+        raise RuntimeError(
+            f"{repo} :: {path}: the commit that added schedule: has no committer "
+            f"date. Refusing to age a never-fired workflow from created_at."
+        )
+    return when
 
 
 def _ts(value: str | None) -> datetime | None:
@@ -541,6 +618,11 @@ def collect(repo: str) -> list[WorkflowState]:
         crons = _parse_crons(repo, wf["path"], default_branch)
         if not crons:
             continue
+        # Only a never-fired workflow is aged, so only that one pays for the
+        # history walk. A workflow that has a schedule run is graded from the run.
+        introduced = (
+            _schedule_introduced_at(repo, wf["path"], default_branch) if _sched[0] is None else None
+        )
         out.append(
             WorkflowState(
                 repo=repo,
@@ -551,6 +633,7 @@ def collect(repo: str) -> list[WorkflowState]:
                 crons=crons,
                 last_schedule_run=_sched[0],
                 recent_conclusions=_sched[1],
+                schedule_introduced_at=introduced,
             )
         )
     return out

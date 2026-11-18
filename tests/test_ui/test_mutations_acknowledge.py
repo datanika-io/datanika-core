@@ -121,7 +121,10 @@ ACKNOWLEDGED_ELSEWHERE = frozenset(
         "AuthState.signup",  # redirects, plus the verification-mail notice (core#700)
         "AuthState.logout",  # redirects to /login
         "AccountState.change_password",  # renders its own `success` flag
+        "AccountState.cancel_email_change",  # pending line clears; cancelled callout
+        "AccountState.request_email_change",  # a callout names each outcome
         "AccountState.delete_account",  # signs the user out
+        "EmailChangeState.confirm",  # the page renders done or invalid
         "PasswordResetState.request_reset",  # its own confirmation screen (core#623)
         "PasswordResetState.submit_new_password",  # redirects to /login?reset=1
         "ConnectionState.handle_file_upload",  # the file name appears in the form

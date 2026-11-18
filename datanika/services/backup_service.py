@@ -356,15 +356,15 @@ class BackupService:
         different org, and warning on every legacy file would train the user to
         click through the warning).
 
-        ``org_slug`` is worth passing when the caller has it: two deployments
-        can both have an org with id 5, and then the id comparison alone says
-        "same org" about a file from somewhere else entirely.
+        ``org_slug`` is required for a same-org answer. Omitting it used to
+        match on id alone (core#681). Two deployments can both have an org
+        with id 5, so a missing slug is foreign whenever the file names an org.
         """
         origin = data.get("org")
         if not isinstance(origin, dict):
             return ""
         same_id = origin.get("id") == org_id
-        same_slug = org_slug is None or origin.get("slug") == org_slug
+        same_slug = bool(org_slug) and origin.get("slug") == org_slug
         if same_id and same_slug:
             return ""
         return str(origin.get("name") or origin.get("slug") or origin.get("id") or "another org")
@@ -616,6 +616,7 @@ class BackupService:
         transformation_svc: TransformationService | None = None,
         *,
         actor_user_id: int,
+        confirm_foreign_org: bool = False,
     ) -> dict:
         """Import connections, uploads, pipelines, and transformations from a backup dict.
 
@@ -642,6 +643,18 @@ class BackupService:
             )
 
         BackupService.validate_backup(session, org_id, data)
+
+        # core#681. The UI used to be the only caller that knew a file came
+        # from another org. A restore that writes anyway is not a warning.
+        # Confirmation stays explicit: moving config between orgs is allowed,
+        # and only after the caller says the user confirmed it.
+        caller = session.get(Organization, org_id)
+        caller_slug = caller.slug if caller is not None else None
+        foreign = BackupService.foreign_org(data, org_id, caller_slug)
+        if foreign and not confirm_foreign_org:
+            raise UserFacingError(
+                f"This backup was exported from {foreign}. Confirm the restore before importing it."
+            )
 
         existing_conns = conn_svc.list_connections(session, org_id)
         conn_name_to_id: dict[str, int] = {c.name: c.id for c in existing_conns}

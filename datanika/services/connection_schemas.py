@@ -132,7 +132,14 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
             "secure": _bool("Use HTTPS (enable for ClickHouse Cloud and TLS instances)"),
-            "cluster_replication": _bool("Enable cluster replication (ReplicatedMergeTree)"),
+            # The destination reads `table_engine_type` (core#662). The old
+            # `cluster_replication` boolean was a name neither the form nor the
+            # runner wrote, so a save dropped it. A stored true flag is still
+            # read once, on open, and saved as replicated_merge_tree.
+            "table_engine_type": _str(
+                "Table engine the destination reads: merge_tree, "
+                "replicated_merge_tree, or shared_merge_tree"
+            ),
         },
         required=["host", "database", "user"],
     ),
@@ -396,15 +403,17 @@ CONFIG_SCHEMAS: dict[str, dict] = {
     "rest_api": _schema(
         {
             "base_url": _str("API base URL"),
-            "auth_type": {
-                "type": "string",
-                "enum": ["none", "bearer", "api_key", "basic"],
-                "default": "none",
-                "description": "Authentication type",
+            # core#662. The source reads `auth` (`dlt_runner._build_rest_api_source`).
+            # `auth_type` / `auth_token` / `auth_user` / `auth_password` were published
+            # and never read, so a save dropped them. `auth` is already a credential
+            # container (`SECRET_CONTAINER_KEYS`).
+            "auth": {
+                "type": "object",
+                "description": (
+                    "Auth config the REST source passes to the client: "
+                    "{type: bearer|api_key|http_basic, ...}"
+                ),
             },
-            "auth_token": _str("Auth token (for bearer/api_key)", sensitive=True),
-            "auth_user": _str("Username (for basic auth)"),
-            "auth_password": _str("Password (for basic auth)", sensitive=True),
             # core#1467: the key the form's Extra Headers field writes and `dlt_runner` sends.
             # A credential container (`SECRET_CONTAINER_KEYS`): every value may be a secret.
             "headers": {"type": "object", "description": "Optional static request headers"},

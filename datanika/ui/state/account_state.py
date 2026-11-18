@@ -11,6 +11,11 @@ import logging
 
 from datanika.config import settings
 from datanika.services.auth import AuthService
+from datanika.services.email_change_service import (
+    ADDRESS_TAKEN,
+    READY,
+    EmailChangeService,
+)
 from datanika.services.email_verification import request_email_verification
 from datanika.services.rate_limit_service import RateLimitService
 from datanika.services.user_service import UserService, UserServiceError
@@ -46,6 +51,12 @@ class AccountState(BaseState):
     # relay" into "the send failed" is what made the outcome unactionable.
     resend_state: str = ""
 
+    # SPEC_EMAIL_CHANGE. Empty until a request, a cancel, or a refusal. Not
+    # gated on ``email_verified``: the person this is for has a typo'd signup
+    # address and has never confirmed it.
+    email_change_state: str = ""
+    pending_email: str = ""
+
     success: bool = False
     error: str = ""
 
@@ -69,7 +80,11 @@ class AccountState(BaseState):
             if user is not None:
                 self.has_password = UserService.has_usable_password(user)
                 self.email_verified = bool(user.email_verified)
-                self.account_email = user.email
+                self.account_email = user.email or ""
+                pii = UserService.get_user_pii(session, user.id)
+                self.pending_email = (
+                    "" if pii is None or not pii.pending_email else pii.pending_email
+                )
 
     # How many resends one account may trigger, and over what span. A window
     # measured in minutes bounds clicks, not mail; an hour bounds mail.
@@ -285,3 +300,145 @@ class AccountState(BaseState):
         # No success toast: there is no session left to render one in, and the account
         # that would have read it no longer exists.
         return AuthState.logout
+
+    # ------------------------------------------------------------------
+    # Email change — SPEC_EMAIL_CHANGE, core#655 AC4
+    # ------------------------------------------------------------------
+
+    def _email_changes(self) -> EmailChangeService:
+        return EmailChangeService(self._service())
+
+    async def request_email_change(self, form_data: dict):
+        """Ask the new address to confirm. The live address does not move.
+
+        Outcomes are ``email_change_state``: ``queued``, ``no_relay``,
+        ``failed``, ``rate_limited``, ``address_taken``, ``invalid``. Each one
+        is rendered. ``no_relay`` is a normal self-hosted deployment.
+
+        Not gated on whether the address was confirmed at signup. A locked-out
+        signup never got that mail, and hiding this control from them is the
+        bug the control exists to fix.
+        """
+        self.email_change_state = ""
+        if not await self._require_live_session():
+            return
+
+        auth = await self.get_state(AuthState)
+        user_id = auth.current_user.id
+        if not user_id:
+            return
+
+        normalised = (form_data.get("new_email") or "").strip().lower()
+        if not _plausible_email(normalised):
+            self.email_change_state = "invalid"
+            return
+
+        # Nothing to send, so nothing is written and the limiter is not spent.
+        if not settings.smtp_host:
+            self.email_change_state = "no_relay"
+            return
+
+        try:
+            limiter = self._rate_limiter()
+            pair_ok = limiter.check_window(
+                EmailChangeService.pair_bucket(user_id, normalised),
+                limit=EmailChangeService.PAIR_LIMIT,
+                window_seconds=EmailChangeService.WINDOW_SECONDS,
+            ).allowed
+            user_ok = limiter.check_window(
+                EmailChangeService.user_bucket(user_id),
+                limit=EmailChangeService.USER_LIMIT,
+                window_seconds=EmailChangeService.WINDOW_SECONDS,
+            ).allowed
+        except Exception:
+            logger.exception("Rate limiter unavailable; refusing email change for user %s", user_id)
+            self.email_change_state = "rate_limited"
+            return
+
+        if not pair_ok or not user_ok:
+            self.email_change_state = "rate_limited"
+            return
+
+        with get_sync_session() as session:
+            nested = session.begin_nested()
+            prepared = self._email_changes().prepare_change(session, user_id, normalised)
+            if prepared.status == ADDRESS_TAKEN:
+                nested.rollback()
+                self.email_change_state = "address_taken"
+                return
+            if prepared.status != READY or not prepared.token:
+                nested.rollback()
+                self.email_change_state = "failed"
+                return
+            try:
+                # Lazy, same reason as verification mail: a service-level import
+                # of the Celery app closes the core#832 cycle.
+                from datanika.tasks.email_tasks import send_email_change_email_task
+
+                send_email_change_email_task.delay(normalised, prepared.token)
+            except Exception:
+                logger.exception("Failed to enqueue email change for user %s", user_id)
+                nested.rollback()
+                self.email_change_state = "failed"
+                return
+            # Status only. The address is personal data and must not land in
+            # the audit payload.
+            self._audit(
+                session,
+                auth.current_org.id,
+                user_id,
+                "update",
+                "email_change",
+                resource_id=user_id,
+                new_values={"status": "requested"},
+            )
+            try:
+                nested.commit()
+                session.commit()
+            except Exception:
+                logger.exception("Email change request failed for user %s", user_id)
+                self.email_change_state = "failed"
+                return
+
+        self.pending_email = normalised
+        self.email_change_state = "queued"
+
+    async def cancel_email_change(self):
+        """Abandon a pending change. The live address stays."""
+        self.email_change_state = ""
+        if not await self._require_live_session():
+            return
+
+        auth = await self.get_state(AuthState)
+        user_id = auth.current_user.id
+        if not user_id:
+            return
+
+        with get_sync_session() as session:
+            self._email_changes().cancel_change(session, user_id)
+            self._audit(
+                session,
+                auth.current_org.id,
+                user_id,
+                "update",
+                "email_change",
+                resource_id=user_id,
+                new_values={"status": "cancelled"},
+            )
+            session.commit()
+
+        self.pending_email = ""
+        self.email_change_state = "cancelled"
+
+
+def _plausible_email(value: str) -> bool:
+    """Enough of an address to mail. Not a deliverability check.
+
+    Checked before the limiter so a typo does not spend the hourly budget.
+    """
+    if value.count("@") != 1 or any(ch.isspace() for ch in value):
+        return False
+    local, domain = value.split("@", 1)
+    if not local or "." not in domain:
+        return False
+    return not domain.startswith(".") and not domain.endswith(".")

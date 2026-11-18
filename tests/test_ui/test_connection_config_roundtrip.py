@@ -17,18 +17,21 @@ test whose docstring says *"a setting with no surface is the core#499 mistake"*.
 
 ## Why this ships as a ratchet rather than a clean green
 
-Measured, the drift was **21 keys across 13 types**, not one. Fixing all of them means
-touching thirteen connector field groups and re-deciding, per key, whether the schema or
-the form has the right name — and for `slack` and `salesforce` neither matched what the
-runner reads (core#662). core#1603 moved the published required lists for those nine
-types onto the keys the form writes. A loader alias the form does not write stays on
-the ledger below. Holding this test back until the rest is fixed leaves the *mechanism*
-unguarded, and the mechanism is what keeps producing new instances.
+Measured at filing, the drift was **21 keys across 13 types**, not one. Fixing them meant
+re-deciding, per key, whether the schema or the form has the name the runner reads — and
+at that measurement `slack` and `salesforce` matched neither. core#1603 moved the published
+required lists onto the keys the form writes. Re-measured before this fix, the runner
+prefers those names and still accepts the alias. Holding this test back until every key
+was fixed would have left the *mechanism* unguarded, and the mechanism is what keeps
+producing new instances.
 
-So `_DROPPED_ON_SAVE` records what is broken today and the check forbids that set from
+So `_DROPPED_ON_SAVE` records what is still dropped and the check forbids that set from
 **growing**. `test_the_ledger_does_not_outlive_the_defects` forbids it from rotting:
 an entry that is no longer dropped must be deleted, so the list shrinks to nothing as
-core#662 is worked off and cannot quietly become a permanent exemption.
+core#662 is worked off and cannot quietly become a permanent exemption. It is empty:
+the SaaS aliases are written beside the canonical name the runner prefers, ClickHouse
+publishes `table_engine_type`, and REST API publishes `auth`. `mongodb.auth_source`
+was re-measured and the form keeps it, so it is not put back (TLS stays core#626).
 
 ## The stand-in `self` is deliberately not a mock
 
@@ -61,25 +64,12 @@ _PLACEHOLDER: dict[str, object] = {
     "object": {"k": "v"},
 }
 
-#: Keys the structured form drops on save, as measured 2026-08-30. **A debt ledger
-#: with an issue number, not a parking space** — every entry is a live silent-data-loss
-#: bug tracked by core#662, and `test_the_ledger_does_not_outlive_the_defects` deletes
-#: it from here the moment it is fixed.
-_DROPPED_ON_SAVE: dict[str, set[str]] = {
-    "clickhouse": {"cluster_replication"},
-    # core#1603: these are loader aliases. The form writes the required name and
-    # does not write the alias. Opening a stored alias in the form still drops it.
-    "jira": {"api_token"},
-    # `mongodb` left this ledger with core#626 — `auth_source` now has a form
-    # input and a line in both serialisers, and `tls`/`srv` arrived with lines in
-    # both from the start. `test_the_ledger_does_not_outlive_the_defects` is what
-    # forced the deletion: leaving the entry here after the fix fails, naming it.
-    "rest_api": {"auth_password", "auth_token", "auth_type", "auth_user"},
-    "salesforce": {"api_key"},
-    "shopify": {"access_token"},
-    "slack": {"bot_token"},
-    "zendesk": {"api_token", "domain"},
-}
+#: Keys the structured form drops on save. **A debt ledger with an issue number,
+#: not a parking space.** Empty after core#662. `test_the_ledger_does_not_outlive_the_defects`
+#: deletes an entry the moment the key round-trips, and `test_no_new_key_is_silently_dropped`
+#: refuses a new one being parked here. `mongodb.auth_source` left with core#626 and a
+#: fresh round trip still keeps it; do not put it back unless that trip starts dropping it.
+_DROPPED_ON_SAVE: dict[str, set[str]] = {}
 
 #: Types whose `_populate_form_from_config` raises on a synthetic config, so the
 #: round trip cannot be measured at all. Not a pass — an unmeasured type.

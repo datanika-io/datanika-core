@@ -3,7 +3,7 @@
 Why this test is the point of the sidecar, not an extra
 ------------------------------------------------------
 The local stack is worth having *because it is production-shaped*. The moment its route
-table drifts from `deploy/server/apache-app.datanika.io.conf`, a local green stops being
+table drifts from `deploy/apache/app.datanika.io.conf`, a local green stops being
 evidence about anything, and it stops being so **silently** — a mis-routed path does not
 error, it returns the Reflex SPA with **HTTP 200**.
 
@@ -33,7 +33,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-VHOST = ROOT / "deploy" / "server" / "apache-app.datanika.io.conf"
+VHOST = ROOT / "deploy" / "apache" / "app.datanika.io.conf"
 NGINX = ROOT / "deploy" / "local" / "nginx-local-proxy.conf"
 LOCAL_COMPOSE = ROOT / "docker-compose.local.yml"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-pointer.yml"

@@ -643,6 +643,9 @@ class ConnectionState(BaseState):
     form_base_url: str = ""
     form_api_key: str = ""
     form_extra_headers: str = ""
+    # The `auth` object `_build_rest_api_source` reads. Not a visible field:
+    # the API key box still writes `api_key`, which this source does not send.
+    form_rest_auth: str = ""
 
     # OpenAPI connector (spec pasted; endpoints auto-discovered on save)
     form_openapi_spec: str = ""
@@ -657,6 +660,10 @@ class ConnectionState(BaseState):
 
     # ClickHouse options
     form_cluster_replication: bool = False
+    # The engine string the destination reads. The checkbox is only the
+    # replicated_merge_tree case; any other stored value has to come back on
+    # save (core#662).
+    form_table_engine_type: str = ""
     form_secure: bool = False
 
     # Oracle — connect by SID instead of service name (legacy single-instance)
@@ -888,6 +895,9 @@ class ConnectionState(BaseState):
     def set_form_extra_headers(self, value: str):
         self._set_config_field("form_extra_headers", value)
 
+    def set_form_rest_auth(self, value: str):
+        self._set_config_field("form_rest_auth", value)
+
     def set_form_openapi_spec(self, value: str):
         self._set_config_field("form_openapi_spec", value)
 
@@ -905,6 +915,9 @@ class ConnectionState(BaseState):
 
     def set_form_cluster_replication(self, value: bool):
         self._set_config_field("form_cluster_replication", value)
+
+    def set_form_table_engine_type(self, value: str):
+        self._set_config_field("form_table_engine_type", value)
 
     def set_form_secure(self, value: bool):
         self._set_config_field("form_secure", value)
@@ -1111,10 +1124,18 @@ class ConnectionState(BaseState):
                 config["database"] = self.form_database
             if self.form_schema:
                 config["schema"] = self.form_schema
-            # ClickHouse options
+            # ClickHouse options. The destination reads `table_engine_type`.
+            # The checkbox is replicated_merge_tree. Unticking must not write
+            # that value back from the stored string. Any other stored engine,
+            # including one the runner will later omit, has to survive Save.
             if t == "clickhouse":
                 if self.form_cluster_replication:
                     config["table_engine_type"] = "replicated_merge_tree"
+                elif (
+                    self.form_table_engine_type
+                    and self.form_table_engine_type != "replicated_merge_tree"
+                ):
+                    config["table_engine_type"] = self.form_table_engine_type
                 config["secure"] = self.form_secure
             if t == "oracle" and self.form_oracle_use_sid:
                 config["use_sid"] = True
@@ -1181,6 +1202,13 @@ class ConnectionState(BaseState):
             # field accepted input, stored it, and changed nothing about any request.
             if self.form_extra_headers.strip():
                 config["headers"] = _parse_extra_headers(self.form_extra_headers)
+            if self.form_rest_auth.strip():
+                try:
+                    auth = json.loads(self.form_rest_auth)
+                except json.JSONDecodeError:
+                    auth = None
+                if isinstance(auth, dict) and auth:
+                    config["auth"] = auth
 
         elif t == "mongodb":
             if self.form_host:
@@ -1248,20 +1276,25 @@ class ConnectionState(BaseState):
                 config["api_key"] = self.form_api_key
 
         elif t == "salesforce":
+            # The runner prefers `access_token` and still accepts `api_key`.
+            # Writing only the preferred name drops a stored alias on Save.
             if self.form_api_key:
                 config["access_token"] = self.form_api_key
+                config["api_key"] = self.form_api_key
             if self.form_instance_url:
                 config["instance_url"] = self.form_instance_url
 
         elif t == "shopify":
             if self.form_api_key:
                 config["api_key"] = self.form_api_key
+                config["access_token"] = self.form_api_key
             if self.form_store:
                 config["store"] = self.form_store
 
         elif t == "jira":
             if self.form_api_key:
                 config["api_key"] = self.form_api_key
+                config["api_token"] = self.form_api_key
             if self.form_email:
                 config["email"] = self.form_email
             if self.form_domain:
@@ -1270,6 +1303,7 @@ class ConnectionState(BaseState):
         elif t == "slack":
             if self.form_api_key:
                 config["api_key"] = self.form_api_key
+                config["bot_token"] = self.form_api_key
 
         elif t == "google_analytics":
             if self.form_api_key:
@@ -1300,8 +1334,10 @@ class ConnectionState(BaseState):
         elif t == "zendesk":
             if self.form_api_key:
                 config["api_key"] = self.form_api_key
+                config["api_token"] = self.form_api_key
             if self.form_domain:
                 config["subdomain"] = self.form_domain
+                config["domain"] = self.form_domain
             if self.form_email:
                 config["email"] = self.form_email
 
@@ -1432,12 +1468,14 @@ class ConnectionState(BaseState):
         self.form_base_url = ""
         self.form_api_key = ""
         self.form_extra_headers = ""
+        self.form_rest_auth = ""
         self.form_openapi_spec = ""
         self.form_uploaded_file_id = 0
         self.form_uploaded_file_name = ""
         self.form_spreadsheet_url = ""
         self.form_service_account_json = ""
         self.form_cluster_replication = False
+        self.form_table_engine_type = ""
         self.form_secure = False
         self.form_oracle_use_sid = False
         self.form_mongodb_tls = False
@@ -1506,12 +1544,14 @@ class ConnectionState(BaseState):
         self.form_base_url = ""
         self.form_api_key = ""
         self.form_extra_headers = ""
+        self.form_rest_auth = ""
         self.form_openapi_spec = ""
         self.form_uploaded_file_id = 0
         self.form_uploaded_file_name = ""
         self.form_spreadsheet_url = ""
         self.form_service_account_json = ""
         self.form_cluster_replication = False
+        self.form_table_engine_type = ""
         self.form_secure = False
         self.form_oracle_use_sid = False
         self.form_mongodb_tls = False
@@ -1547,9 +1587,15 @@ class ConnectionState(BaseState):
             self.form_database = config.get("database", "")
             self.form_schema = config.get("schema", "")
             if conn_type == "clickhouse":
-                self.form_cluster_replication = (
-                    config.get("table_engine_type") == "replicated_merge_tree"
-                )
+                engine = config.get("table_engine_type")
+                if isinstance(engine, str) and engine:
+                    self.form_table_engine_type = engine
+                    self.form_cluster_replication = engine == "replicated_merge_tree"
+                elif config.get("cluster_replication") is True:
+                    # A config saved before the schema named the engine. The
+                    # destination never read the boolean. Save writes the engine.
+                    self.form_cluster_replication = True
+                    self.form_table_engine_type = "replicated_merge_tree"
                 self.form_secure = config.get("secure", False)
             if conn_type == "oracle":
                 self.form_oracle_use_sid = config.get("use_sid", False)
@@ -1585,6 +1631,8 @@ class ConnectionState(BaseState):
             self.form_base_url = config.get("base_url", "")
             self.form_api_key = config.get("api_key", "")
             self.form_extra_headers = _extra_headers_for_the_form(config)
+            auth = config.get("auth")
+            self.form_rest_auth = json.dumps(auth) if isinstance(auth, dict) and auth else ""
         elif conn_type == "mongodb":
             self.form_host = config.get("host", "")
             self.form_port = str(config.get("port", _DEFAULT_PORTS.get("mongodb", "")))
@@ -1609,17 +1657,17 @@ class ConnectionState(BaseState):
         elif conn_type == "hubspot":
             self.form_api_key = config.get("api_key", "")
         elif conn_type == "salesforce":
-            self.form_api_key = config.get("access_token", "")
+            self.form_api_key = config.get("access_token") or config.get("api_key", "")
             self.form_instance_url = config.get("instance_url", "")
         elif conn_type == "shopify":
-            self.form_api_key = config.get("api_key", "")
+            self.form_api_key = config.get("api_key") or config.get("access_token", "")
             self.form_store = config.get("store", "")
         elif conn_type == "jira":
-            self.form_api_key = config.get("api_key", "")
+            self.form_api_key = config.get("api_key") or config.get("api_token", "")
             self.form_email = config.get("email", "")
             self.form_domain = config.get("domain", "")
         elif conn_type == "slack":
-            self.form_api_key = config.get("api_key", "")
+            self.form_api_key = config.get("api_key") or config.get("bot_token", "")
         elif conn_type == "google_analytics":
             self.form_api_key = config.get("service_account_json", "")
             self.form_property_id = config.get("property_id", "")
@@ -1634,8 +1682,8 @@ class ConnectionState(BaseState):
             self.form_api_key = config.get("access_token", "")
             self.form_account_id = config.get("account_id", "")
         elif conn_type == "zendesk":
-            self.form_api_key = config.get("api_key", "")
-            self.form_domain = config.get("subdomain", "")
+            self.form_api_key = config.get("api_key") or config.get("api_token", "")
+            self.form_domain = config.get("subdomain") or config.get("domain", "")
             self.form_email = config.get("email", "")
         elif conn_type == "airtable":
             self.form_api_key = config.get("api_key", "")

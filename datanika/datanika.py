@@ -7,6 +7,7 @@ from datanika.logging_config import setup_logging
 from datanika.plugin_registry import plugin_head_components
 from datanika.ui.pages.audit_logs import audit_logs_page
 from datanika.ui.pages.auth_complete import auth_complete_page
+from datanika.ui.pages.confirm_email_change import confirm_email_change_page
 from datanika.ui.pages.connections import connections_page
 from datanika.ui.pages.dag import dag_page
 from datanika.ui.pages.dashboard import dashboard_page
@@ -32,6 +33,7 @@ from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.dashboard_state import DashboardState
+from datanika.ui.state.email_change_state import EmailChangeState
 from datanika.ui.state.mcp_consent_state import McpConsentState
 from datanika.ui.state.model_detail_state import ModelDetailState
 from datanika.ui.state.model_state import ModelState
@@ -144,6 +146,15 @@ app.add_page(
     # Validates the token for rendering only, and never consumes it — mail
     # scanners prefetch this URL before the recipient ever clicks it.
     on_load=[PasswordResetState.load_token],
+)
+# Same shape as /reset-password: a public Reflex page, validated on load,
+# consumed by the button. A backend GET would be prefetched by mail scanners
+# and would change the address before the recipient clicked.
+app.add_page(
+    confirm_email_change_page,
+    route="/confirm-email-change",
+    title="Confirm your email | Datanika",
+    on_load=[EmailChangeState.load_token],
 )
 
 # Protected pages

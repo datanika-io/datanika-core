@@ -108,6 +108,34 @@ def send_password_reset_email_task(to: str, token: str) -> bool:
 
 
 @celery_app.task(
+    name="datanika.send_email_change_email",
+    autoretry_for=(OSError, ConnectionError, TimeoutError),
+    retry_backoff=30,
+    retry_backoff_max=300,
+    max_retries=3,
+)
+def send_email_change_email_task(to: str, token: str) -> bool:
+    # The raw token transits this argument list. Redis is local and is not in
+    # the off-site dump; the database stores the hash. Nothing here may log
+    # its arguments.
+    from datanika.config import settings
+    from datanika.services.email_service import EmailService
+
+    svc = EmailService(
+        smtp_host=settings.smtp_host,
+        smtp_port=settings.smtp_port,
+        smtp_user=settings.smtp_user,
+        smtp_password=settings.smtp_password,
+        smtp_from_email=settings.smtp_from_email,
+        smtp_from_name=settings.smtp_from_name,
+        smtp_use_tls=settings.smtp_use_tls,
+        frontend_url=settings.frontend_url,
+        raise_on_error=True,
+    )
+    return svc.send_email_change_email(to, token)
+
+
+@celery_app.task(
     name="datanika.send_quota_warning_email",
     # 🚨 This task had `raise_on_error=True` and **no** `autoretry_for`, which is
     # the worst of both: it raises on a transient relay blip and then does not

@@ -193,6 +193,138 @@ def delete_account_section() -> rx.Component:
     )
 
 
+def _email_change_section() -> rx.Component:
+    """Change the address on this account. Shown whether or not it is confirmed.
+
+    The unverified callout above is the resend control, which mails the address
+    already on the account. This form mails a *new* one, and a verified account
+    is allowed to use it too. Nesting it under ``~email_verified`` would hide
+    it from everyone except the typo case, and hiding it *inside* that cond
+    would hide it from the typo case's opposite — either way one of the two
+    people who need it cannot reach it.
+    """
+    return rx.vstack(
+        rx.text(_t["account.change_email"], size="2", weight="bold"),
+        rx.cond(
+            AccountState.pending_email != "",
+            rx.vstack(
+                rx.text(
+                    _t["account.email_change_pending"].replace(
+                        "{email}", AccountState.pending_email
+                    ),
+                    size="2",
+                ),
+                rx.button(
+                    _t["account.email_change_cancel"],
+                    on_click=AccountState.cancel_email_change,
+                    size="2",
+                    variant="outline",
+                ),
+                spacing="2",
+                width="100%",
+                align="start",
+            ),
+        ),
+        rx.form(
+            rx.vstack(
+                rx.el.label(
+                    rx.text(_t["account.new_email"], size="2", weight="medium"),
+                    html_for="account-new-email",
+                ),
+                rx.input(
+                    id="account-new-email",
+                    name="new_email",
+                    type="email",
+                    custom_attrs={"autoComplete": "email"},
+                    width="100%",
+                ),
+                rx.button(
+                    _t["account.change_email_button"],
+                    type="submit",
+                    size="2",
+                ),
+                spacing="2",
+                width="100%",
+            ),
+            on_submit=AccountState.request_email_change,
+            reset_on_submit=True,
+            width="100%",
+        ),
+        rx.cond(
+            AccountState.email_change_state == "queued",
+            rx.callout(
+                _t["account.email_change_queued"],
+                icon="circle_check",
+                color_scheme="green",
+                high_contrast=True,
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            AccountState.email_change_state == "no_relay",
+            rx.callout(
+                _t["account.email_change_no_relay"],
+                icon="info",
+                color_scheme="gray",
+                high_contrast=True,
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            AccountState.email_change_state == "failed",
+            rx.callout(
+                _t["account.email_change_failed"],
+                icon="triangle_alert",
+                color_scheme="red",
+                high_contrast=True,
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            AccountState.email_change_state == "rate_limited",
+            rx.callout(
+                _t["account.email_change_rate_limited"],
+                icon="clock",
+                color_scheme="amber",
+                high_contrast=True,
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            AccountState.email_change_state == "address_taken",
+            rx.callout(
+                _t["account.email_change_taken"],
+                icon="triangle_alert",
+                color_scheme="amber",
+                high_contrast=True,
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            AccountState.email_change_state == "invalid",
+            rx.callout(
+                _t["account.email_change_invalid"],
+                icon="triangle_alert",
+                color_scheme="red",
+                high_contrast=True,
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            AccountState.email_change_state == "cancelled",
+            rx.callout(
+                _t["account.email_change_cancelled"],
+                icon="info",
+                color_scheme="gray",
+                high_contrast=True,
+                width="100%",
+            ),
+        ),
+        spacing="3",
+        width="100%",
+    )
+
+
 def account_card() -> rx.Component:
     """Change (or first set) your own password — core#623, Part A.
 
@@ -323,6 +455,7 @@ def account_card() -> rx.Component:
                     width="100%",
                 ),
             ),
+            _email_change_section(),
             rx.form(
                 rx.vstack(
                     rx.text(

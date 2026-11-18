@@ -110,6 +110,18 @@ class EmailService:
         text = _PASSWORD_RESET_TEXT.format(url=url, app_name="Datanika")
         return self.send(to, "Set a new password — Datanika", html, text_body=text)
 
+    def send_email_change_email(self, to: str, token: str) -> bool:
+        """Send the confirm-your-new-address link (SPEC_EMAIL_CHANGE).
+
+        A frontend path, same as password reset. ``/api/`` is the only prefix
+        Apache forwards to the backend without a vhost edit, and a GET on that
+        prefix would let a mail scanner spend the single-use token.
+        """
+        url = f"{self._frontend_url}/confirm-email-change?token={token}"
+        html = _EMAIL_CHANGE_TEMPLATE.format(url=url, app_name="Datanika")
+        text = _EMAIL_CHANGE_TEXT.format(url=url, app_name="Datanika")
+        return self.send(to, "Confirm your new email — Datanika", html, text_body=text)
+
     def send_quota_warning_email(
         self,
         to: str,
@@ -244,6 +256,45 @@ This link expires in 60 minutes and can only be used once.
 If you didn't request this, you can ignore this email - nothing has changed
 and your current password still works.
 """  # noqa: S105 - a plain-text email body, not a credential
+
+_EMAIL_CHANGE_TEMPLATE = """\
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; \
+max-width: 560px; margin: 0 auto; padding: 40px 20px;">
+  <h2 style="color: #1a1a2e;">Confirm your new email</h2>
+  <p style="color: #444; line-height: 1.6;">
+    Someone asked to use this address for a {app_name} account. Your current
+    address stays in place until you open the link below.
+  </p>
+  <p style="margin: 32px 0;">
+    <a href="{url}" style="background: #7c3aed; color: #fff; padding: 12px 28px; \
+border-radius: 6px; text-decoration: none; font-weight: 600;">Confirm new email</a>
+  </p>
+  <p style="color: #888; font-size: 13px;">
+    This link expires in 24 hours and can only be used once.
+  </p>
+  <p style="color: #888; font-size: 13px;">
+    If you didn't request this, you can ignore this email — nothing has changed.
+  </p>
+  <p style="color: #888; font-size: 13px;">
+    Or copy this link: {url}
+  </p>
+</body>
+</html>"""
+
+_EMAIL_CHANGE_TEXT = """\
+Confirm your new email
+
+Someone asked to use this address for a {app_name} account.
+Your current address stays in place until you open this link:
+
+{url}
+
+This link expires in 24 hours and can only be used once.
+
+If you didn't request this, you can ignore this email - nothing has changed.
+"""
 
 #: The upgrade CTA, spliced into the quota warning only on a deployment that
 #: serves a billing page (#682). Kept as its own template rather than an ``if``

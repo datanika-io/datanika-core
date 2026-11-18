@@ -797,7 +797,7 @@ class AuthState(rx.State):
                 self.auth_error = "User not found"
                 return rx.redirect("/login")
 
-            email, full_name = svc.account_address(session, user)
+            email, full_name = UserService.account_address(session, user)
             self.current_user = UserInfo(id=user.id, email=email or "", full_name=full_name or "")
             orgs = svc.get_user_orgs(session, user_id)
             self.user_orgs = [OrgInfo(id=o.id, name=o.name, slug=o.slug) for o in orgs]

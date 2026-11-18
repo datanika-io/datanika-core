@@ -75,6 +75,11 @@ UNAUTHENTICATED: dict[tuple[str, str, str], str] = {
         "PasswordResetState",
         "submit_new_password",
     ): "reached from an emailed token by someone who cannot sign in",
+    (
+        "email_change_state.py",
+        "EmailChangeState",
+        "confirm",
+    ): "reached from an emailed link; the visitor may be signed out",
 }
 
 

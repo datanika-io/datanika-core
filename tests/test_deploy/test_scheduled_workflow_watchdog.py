@@ -378,6 +378,8 @@ def _fake_gh(
     missing: set[str] = frozenset(),
     listing: list[str] | None = None,
     schedule_runs: dict[str, list] | None = None,
+    commit_histories: dict[str, list[dict]] | None = None,
+    omit_runs_key_for: set[str] | None = None,
 ):
     """A stand-in for `gh api` that 404s exactly like the real one.
 
@@ -393,20 +395,60 @@ def _fake_gh(
     orphaned record.
 
     `schedule_runs` overrides the per-workflow-id schedule history; the default is
-    one recent run for every workflow.
+    one recent run for every workflow. An empty list is a real zero. It is not the
+    same input as `omit_runs_key_for`, which returns HTTP 200 with no
+    `workflow_runs` key at all (core#1243).
+
+    `commit_histories` maps a workflow path to commits newest-first. Each entry is
+    `{"sha", "date", "has_schedule"}`. The date is the committer date, which is
+    when that commit landed on the queried branch.
     """
     calls: list[str] = []
+    arg_lists: list[tuple[str, ...]] = []
     files = _DEFAULT_BRANCH_FILES if listing is None else listing
+
+    def _query(endpoint: str) -> dict[str, str]:
+        query = endpoint.split("?", 1)[1] if "?" in endpoint else ""
+        params: dict[str, str] = {}
+        for part in query.split("&"):
+            if not part:
+                continue
+            key, _, value = part.partition("=")
+            params[key] = value
+        return params
+
+    def _body_for(path: str, ref: str) -> str:
+        history = (commit_histories or {}).get(path)
+        has_schedule = True
+        if history is not None:
+            match = next((item for item in history if item["sha"] == ref), None)
+            # A branch name is the tip. The tip is the newest commit.
+            has_schedule = history[0]["has_schedule"] if match is None else match["has_schedule"]
+        if has_schedule:
+            return "on:\n  schedule:\n    - cron: '0 6 * * *'\n"
+        return "on:\n  workflow_dispatch:\n"
 
     def fake(*args: str) -> str:
         endpoint = args[1] if len(args) > 1 else ""
         calls.append(endpoint)
+        arg_lists.append(args)
         if endpoint.startswith("repos/") and endpoint.count("/") == 2:
             return "master\n"
         if endpoint.endswith("/actions/workflows"):
             return json.dumps(_REAL_WORKFLOWS_PAYLOAD)
         if "/contents/.github/workflows?" in endpoint:
             return "\n".join(files) + ("\n" if files else "")
+        if "/commits?" in endpoint:
+            path = _query(endpoint).get("path", "")
+            history = (commit_histories or {}).get(path)
+            if history is None:
+                history = [
+                    {"sha": "scheddefault", "date": "2026-04-01T00:00:00Z", "has_schedule": True}
+                ]
+            # jq-shaped, one object per line, newest first. This is what
+            # `--paginate --jq` emits, not the raw commits array.
+            lines = [json.dumps({"sha": item["sha"], "date": item["date"]}) for item in history]
+            return "\n".join(lines) + "\n"
         if "/contents/" in endpoint:
             path = endpoint.split("/contents/", 1)[1].split("?", 1)[0]
             # 🚨 A path absent from the listing ALSO 404s, because that is what
@@ -418,16 +460,21 @@ def _fake_gh(
             # the listing says is present that still cannot be read.
             if path in missing or (path.startswith(wd.WORKFLOW_DIR_PREFIX) and path not in files):
                 raise subprocess.CalledProcessError(1, ["gh", *args])
-            body = "on:\n  schedule:\n    - cron: '0 6 * * *'\n"
-            return base64.b64encode(body.encode()).decode()
+            ref = _query(endpoint).get("ref", "")
+            return base64.b64encode(_body_for(path, ref).encode()).decode()
         if "/runs?event=schedule" in endpoint:
             wf_id = endpoint.split("/workflows/", 1)[1].split("/", 1)[0]
+            if omit_runs_key_for is not None and wf_id in omit_runs_key_for:
+                # 200, and total_count says a run exists. The key the parser
+                # needs is absent. That must not become "never fired".
+                return json.dumps({"total_count": 1})
             if schedule_runs is not None and wf_id in schedule_runs:
                 return json.dumps({"workflow_runs": schedule_runs[wf_id]})
             return json.dumps({"workflow_runs": [{"created_at": "2026-09-02T06:10:00Z"}]})
         raise AssertionError(f"unexpected gh call: {endpoint}")
 
     fake.calls = calls
+    fake.arg_lists = arg_lists
     return fake
 
 
@@ -914,6 +961,184 @@ class TestConclusionCollection:
         monkeypatch.setattr(wd, "_gh", lambda *a, **k: json.dumps({"workflow_runs": []}))
         ts, conclusions = wd._last_schedule_run("o/r", 1)
         assert ts is None and conclusions == []
+
+    def test_a_200_without_workflow_runs_is_not_never_fired(self, monkeypatch):
+        """core#1243. Armed against workflow 1, which the same fake shows has a run.
+
+        ``runs.get("workflow_runs") or []`` turns a 200 whose JSON has no such key
+        into the same ``None`` an empty list produces. The empty list is a workflow
+        that really has no schedule runs. The missing key is not.
+        """
+        monkeypatch.setattr(wd, "_gh", _fake_gh())
+        ts, _conclusions = wd._last_schedule_run("datanika-io/datanika-core", 1)
+        assert ts is not None, "workflow 1 is the control that has schedule runs"
+
+        monkeypatch.setattr(wd, "_gh", _fake_gh(omit_runs_key_for={"1"}))
+        with pytest.raises(RuntimeError, match="workflow_runs"):
+            wd._last_schedule_run("datanika-io/datanika-core", 1)
+
+    def test_collect_does_not_read_a_missing_runs_key_as_never_fired(self, monkeypatch):
+        """The function-level raise is not enough if collect() catches it and stores None."""
+        monkeypatch.setattr(wd, "_gh", _fake_gh())
+        found = wd.collect("datanika-io/datanika-core")
+        known = next(w for w in found if w.path == ".github/workflows/ci.yml")
+        assert known.last_schedule_run is not None
+
+        monkeypatch.setattr(wd, "_gh", _fake_gh(omit_runs_key_for={"1"}))
+        with pytest.raises(RuntimeError, match="workflow_runs"):
+            wd.collect("datanika-io/datanika-core")
+
+
+class TestNeverFiredAgesFromTheScheduleCommit:
+    """core#1243. ``created_at`` is when GitHub registered the workflow file.
+
+    A file can sit on the default branch for months with no ``schedule:`` block.
+    The day the block lands, the record is already older than the budget, so the
+    first missed fire is graded as "never registered". The clock is the commit
+    that put the current ``schedule:`` block on the default branch.
+    """
+
+    def test_an_old_file_with_a_new_schedule_is_still_inside_the_budget(self):
+        problems, notes = wd.find_problems(
+            [
+                _wf(
+                    created_at=NOW - timedelta(days=200),
+                    schedule_introduced_at=NOW - timedelta(hours=15),
+                    last_schedule_run=None,
+                )
+            ],
+            NOW,
+        )
+        assert problems == []
+        assert len(notes) == 1
+        assert "Too new to judge" in notes[0]
+
+    def test_a_new_file_record_does_not_hide_an_old_schedule(self):
+        problems, _notes = wd.find_problems(
+            [
+                _wf(
+                    created_at=NOW - timedelta(hours=15),
+                    schedule_introduced_at=NOW - timedelta(days=7),
+                    last_schedule_run=None,
+                )
+            ],
+            NOW,
+        )
+        assert len(problems) == 1
+        assert "never" in problems[0]
+        assert "DEFAULT branch" in problems[0]
+
+
+def _commit(sha: str, when: datetime, has_schedule: bool) -> dict:
+    return {
+        "sha": sha,
+        "date": when.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "has_schedule": has_schedule,
+    }
+
+
+class TestCollectionAgesNeverFiredFromTheScheduleCommit:
+    """The comparator test above is not evidence the collector fills the field.
+
+    ``ci.yml`` in the fixture was registered 2026-04-01. That ``created_at`` is
+    outside the budget on every ``now`` these tests use. Workflow 1 is given
+    zero schedule runs, so the never-fired branch is the one that runs.
+    """
+
+    NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+    PATH = ".github/workflows/ci.yml"
+
+    def _collect(self, monkeypatch, history: list[dict]):
+        monkeypatch.setattr(
+            wd,
+            "_gh",
+            _fake_gh(schedule_runs={"1": []}, commit_histories={self.PATH: history}),
+        )
+        found = wd.collect("datanika-io/datanika-core")
+        return next(w for w in found if w.path == self.PATH)
+
+    def test_a_later_edit_does_not_reset_the_clock_and_created_at_is_not_it(self, monkeypatch):
+        """Newest commit is 1h ago and still has schedule. The block was added 15h ago.
+
+        Taking the newest commit, or ``created_at`` (2026-04-01), both answer a
+        different question. 15h is inside the 38h daily budget. April is not.
+        """
+        intro = self.NOW - timedelta(hours=15)
+        ci = self._collect(
+            monkeypatch,
+            [
+                _commit("newsha", self.NOW - timedelta(hours=1), True),
+                _commit("introsha", intro, True),
+                _commit("oldsha", datetime(2026, 4, 1, tzinfo=UTC), False),
+            ],
+        )
+        assert ci.last_schedule_run is None
+        assert ci.created_at == datetime(2026, 4, 1, tzinfo=UTC)
+        assert ci.schedule_introduced_at == intro
+        problems, notes = wd.find_problems([ci], self.NOW)
+        assert problems == []
+        assert any("Too new to judge" in note for note in notes)
+
+    def test_a_readded_schedule_is_aged_from_the_readd(self, monkeypatch):
+        """An older schedule: block that was removed is not the current one.
+
+        Walking every commit that has ever contained schedule: and taking the
+        oldest would page a block that landed again 15h ago.
+        """
+        readd = self.NOW - timedelta(hours=15)
+        ci = self._collect(
+            monkeypatch,
+            [
+                _commit("readdsha", readd, True),
+                _commit("removedsha", self.NOW - timedelta(days=30), False),
+                _commit("originalsha", datetime(2026, 4, 1, tzinfo=UTC), True),
+            ],
+        )
+        assert ci.schedule_introduced_at == readd
+        problems, _notes = wd.find_problems([ci], self.NOW)
+        assert problems == []
+
+    def test_an_old_schedule_still_pages_after_a_recent_edit(self, monkeypatch):
+        intro = self.NOW - timedelta(days=7)
+        ci = self._collect(
+            monkeypatch,
+            [
+                _commit("editsha", self.NOW - timedelta(hours=1), True),
+                _commit("introsha", intro, True),
+                _commit("plainsha", self.NOW - timedelta(days=8), False),
+            ],
+        )
+        assert ci.schedule_introduced_at == intro
+        problems, _notes = wd.find_problems([ci], self.NOW)
+        assert len(problems) == 1
+        assert "never" in problems[0]
+        assert "DEFAULT branch" in problems[0]
+
+    def test_history_that_is_not_commits_is_not_aged_from_created_at(self, monkeypatch):
+        """A 200 that is not commit records must not fall through to created_at."""
+
+        def gh(*args: str) -> str:
+            endpoint = args[1] if len(args) > 1 else ""
+            if "/commits?" in endpoint:
+                return "{}\n"
+            return _fake_gh(schedule_runs={"1": []})(*args)
+
+        monkeypatch.setattr(wd, "_gh", gh)
+        with pytest.raises(RuntimeError, match="created_at"):
+            wd.collect("datanika-io/datanika-core")
+
+    def test_the_schedule_history_request_is_paginated(self, monkeypatch):
+        fake = _fake_gh(
+            schedule_runs={"1": []},
+            commit_histories={
+                self.PATH: [_commit("onlysha", self.NOW - timedelta(hours=15), True)]
+            },
+        )
+        monkeypatch.setattr(wd, "_gh", fake)
+        wd.collect("datanika-io/datanika-core")
+        history_calls = [args for args in fake.arg_lists if "/commits?" in args[1]]
+        assert len(history_calls) == 1, history_calls
+        assert "--paginate" in history_calls[0]
 
 
 def test_strict_xfail_audit_installs_what_its_script_imports():

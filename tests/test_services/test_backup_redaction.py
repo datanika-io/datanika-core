@@ -13,10 +13,12 @@ hold for that to be true, and neither did:
 """
 
 import json
+import sqlite3
 
 import pytest
 from cryptography.fernet import Fernet
 
+from datanika.errors import UserFacingError
 from datanika.models.connection import ConnectionType
 from datanika.models.user import Organization
 from datanika.services.backup_service import (
@@ -145,6 +147,46 @@ class TestRedactionRoundTrips:
             conn_svc.get_connection(db_session, org.id, loaded_connection.id).config_encrypted
         )
         assert after == before, "an export/import round trip changed the stored config"
+
+    def test_overwrite_restore_still_passes_the_connection_test(
+        self, db_session, encryption, conn_svc, upload_svc, org, tmp_path
+    ):
+        """Byte-identical is not the connection test. Open the restored file."""
+        path = tmp_path / "kept.sqlite"
+        raw = sqlite3.connect(path)
+        raw.execute("create table kept (x integer)")
+        raw.commit()
+        raw.close()
+        config = {"path": str(path)}
+        created = conn_svc.create_connection(
+            db_session,
+            org.id,
+            "Kept",
+            ConnectionType.SQLITE,
+            config,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        ok_before, before_msg = ConnectionService.test_connection(config, ConnectionType.SQLITE)
+        assert ok_before is True, before_msg
+
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
+        BackupService.import_backup(
+            db_session,
+            org.id,
+            encryption,
+            conn_svc,
+            upload_svc,
+            backup,
+            {("connection", "Kept"): "overwrite"},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        restored = encryption.decrypt(
+            conn_svc.get_connection(db_session, org.id, created.id).config_encrypted
+        )
+        ok_after, after_msg = ConnectionService.test_connection(restored, ConnectionType.SQLITE)
+        assert ok_after is True, after_msg
 
     def test_creating_from_a_redacted_backup_omits_the_secret_rather_than_storing_the_sentinel(
         self, db_session, encryption, conn_svc, upload_svc, org, loaded_connection
@@ -301,7 +343,7 @@ class TestOrgProvenance:
         backup = BackupService.export_backup(
             db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
         )
-        assert BackupService.foreign_org(backup, org.id) == ""
+        assert BackupService.foreign_org(backup, org.id, org.slug) == ""
 
     def test_a_backup_from_another_org_is_reported(self, db_session, encryption, org, other_org):
         backup = BackupService.export_backup(
@@ -318,8 +360,9 @@ class TestOrgProvenance:
     def test_a_matching_id_from_a_different_deployment_is_still_foreign(self, db_session, org):
         """Org ids are per-deployment. Two installs both have an org 1."""
         elsewhere = {"version": 3, "org": {"id": org.id, "name": "Elsewhere", "slug": "elsewhere"}}
-        assert BackupService.foreign_org(elsewhere, org.id) == "", "id-only comparison matches"
+        assert BackupService.foreign_org(elsewhere, org.id) == "Elsewhere"
         assert BackupService.foreign_org(elsewhere, org.id, org.slug) == "Elsewhere"
+        assert BackupService.foreign_org(elsewhere, org.id, "elsewhere") == ""
 
     def test_a_foreign_backup_still_imports(
         self, db_session, encryption, conn_svc, upload_svc, org, other_org
@@ -351,5 +394,42 @@ class TestOrgProvenance:
             backup,
             {},
             actor_user_id=make_org_admin(db_session, org.id),
+            confirm_foreign_org=True,
         )
         assert result["connections_imported"] == 1
+
+    def test_omitting_the_slug_does_not_treat_a_matching_id_as_this_org(self, org):
+        """A two-argument call must fail closed. Org ids are not global."""
+        elsewhere = {"version": 3, "org": {"id": org.id, "name": "Elsewhere", "slug": "elsewhere"}}
+        assert BackupService.foreign_org(elsewhere, org.id) == "Elsewhere"
+
+    def test_a_foreign_backup_is_not_written_without_confirmation(
+        self, db_session, encryption, conn_svc, upload_svc, org, other_org
+    ):
+        """The service, not the UI, decides. No confirmation flag means no write."""
+        conn_svc.create_connection(
+            db_session,
+            other_org.id,
+            "Portable",
+            ConnectionType.POSTGRES,
+            {"host": "h"},
+            actor_user_id=make_org_admin(db_session, other_org.id),
+        )
+        backup = BackupService.export_backup(
+            db_session,
+            other_org.id,
+            encryption,
+            actor_user_id=make_org_admin(db_session, other_org.id),
+        )
+        with pytest.raises(UserFacingError):
+            BackupService.import_backup(
+                db_session,
+                org.id,
+                encryption,
+                conn_svc,
+                upload_svc,
+                backup,
+                {},
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
+        assert [c.name for c in conn_svc.list_connections(db_session, org.id)] == []

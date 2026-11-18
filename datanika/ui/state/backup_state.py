@@ -118,13 +118,25 @@ class BackupState(BaseState):
         for c in self.restore_conflicts:
             typ, name = c["key"].split(":", 1)
             resolutions[(typ, name)] = c.get("resolution", "skip")
-        await self._do_import(org_id, self.restore_data, resolutions)
+        await self._do_import(
+            org_id,
+            self.restore_data,
+            resolutions,
+            confirm_foreign_org=bool(self.restore_foreign_org),
+        )
         self.restore_conflicts = []
         self.restore_data = {}
         self.restore_foreign_org = ""
         self.restore_pending = False
 
-    async def _do_import(self, org_id: int, data: dict, resolutions: dict[tuple[str, str], str]):
+    async def _do_import(
+        self,
+        org_id: int,
+        data: dict,
+        resolutions: dict[tuple[str, str], str],
+        *,
+        confirm_foreign_org: bool = False,
+    ):
         from datanika.ui.state.auth_state import AuthState
 
         auth_state = await self.get_state(AuthState)
@@ -143,6 +155,7 @@ class BackupState(BaseState):
                     data,
                     resolutions,
                     actor_user_id=user_id,
+                    confirm_foreign_org=confirm_foreign_org,
                 )
                 self._audit(
                     session,

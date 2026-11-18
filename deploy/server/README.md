@@ -30,9 +30,9 @@ and **fails closed** if its own list is truncated.
 | `rebuild-parity-drill.sh` | `/opt/datanika/scripts/rebuild-parity-drill.sh` | ✅ `scripts/install-server-scripts.sh` | cron, monthly 05:30 |
 | `export-prod-settings.sh` | `/opt/datanika/scripts/export-prod-settings.sh` | ✅ `scripts/install-server-scripts.sh` | cron, every 5 min |
 | `backup-pubkey.asc` | `/opt/datanika/scripts/backup-pubkey.asc` | ✅ `scripts/install-server-scripts.sh` (the file); `gpg --import` into root's keyring stays manual | `backup-offsite.sh` |
-| `apache-app.datanika.io.conf` | ⚠️ nowhere — see [core#745] | **nothing** — a duplicate of `deploy/apache/app.datanika.io.conf`, which is what `sync-vhosts.sh` reads | n/a |
-| `apache-staging-app.datanika.io.conf` | ⚠️ nowhere — see [core#745] | **nothing** — duplicate of `deploy/apache/staging-app.datanika.io.conf` | n/a |
-| `apache-prod-active-ports.conf` | `/etc/apache2/conf-enabled/datanika-prod-active.conf` | rewritten on every blue/green swap by `deploy-bluegreen.sh` | Apache |
+| `deploy/apache/app.datanika.io.conf` | `/etc/apache2/sites-enabled/zapp-datanika-io.conf` | `scripts/sync-vhosts.sh` — this is the directory it applies | Apache |
+| `deploy/apache/staging-app.datanika.io.conf` | `/etc/apache2/sites-enabled/zstaging-app-datanika-io.conf` | `scripts/sync-vhosts.sh` | Apache |
+| `deploy/apache/datanika-prod-active.conf.example` | `/etc/apache2/conf-enabled/datanika-prod-active.conf` | rewritten on every blue/green swap by `deploy-bluegreen.sh`; the example is the shape, not the live colour | Apache |
 | `networkd-99-datanika-dns.conf` | `/etc/systemd/network/10-netplan-eth0.network.d/99-datanika-dns.conf` | **by hand, deliberately** (see below) | `systemd-networkd` |
 | `deploy-pointer.sh` | dev-machine fallback | n/a — never installed | by hand, only if CD is broken |
 
@@ -40,12 +40,15 @@ and **fails closed** if its own list is truncated.
 from cron every five minutes on production. A file missing from the inventory is worse than one
 listed with the wrong column, because nothing prompts you to check it.
 
-🚨 **The two `apache-*.conf` rows are [core#745] and this table used to state the opposite** — that
-`sync-vhosts.sh` applied them. It reads `deploy/apache/`. Verified by measurement 2026-09-04: the
-pairs are byte-identical (`9e2cf96e`, `98ff0099`), which is exactly what makes them harmless *now*
-and dangerous later — edit the copy here and the change is real, reviewed, merged and deployed, and
-reaches no vhost. `tests/test_deploy/test_server_script_coverage.py::test_the_apache_duplicates_have_not_drifted`
-now pins them identical, so the day they diverge, CI says so instead of Apache staying silent.
+🚨 **`sync-vhosts.sh` applies `deploy/apache/`, not this directory** ([core#745]). The two vhosts
+and the active-colour example used to have a second copy here (`apache-app.datanika.io.conf`,
+`apache-staging-app.datanika.io.conf`, `apache-prod-active-ports.conf`). Those copies were
+byte-identical on 2026-09-04 (`9e2cf96e`, `98ff0099`, and the ports file matched
+`datanika-prod-active.conf.example`), which is what made them harmless then and dangerous later:
+an edit to the copy in this directory is real, reviewed, merged and deployed, and reaches no
+vhost. The copies are gone.
+`tests/test_deploy/test_server_script_coverage.py::test_no_file_under_deploy_server_duplicates_a_file_under_deploy_apache`
+fails if a file here is the same content as a file under `deploy/apache/` again.
 
 **Coverage is enforced, not remembered.** `tests/test_deploy/test_server_script_coverage.py` parses
 the installer's own `INSTALL` / `INSTALL_DATA` arrays and requires every file in this directory to be
@@ -78,12 +81,13 @@ on one**, and refresh it here in the same change:
 
 ```bash
 ssh -i ~/.ssh/id_ed25519 root@185.25.22.188 \
-  'cat /etc/apache2/sites-enabled/zapp-datanika-io.conf' > deploy/server/apache-app.datanika.io.conf
+  'cat /etc/apache2/sites-enabled/zapp-datanika-io.conf' > deploy/apache/app.datanika.io.conf
 ```
 
-**`apache-prod-active-ports.conf` is a snapshot of a value that alternates.** It records whichever
-colour was serving when it was captured. It is here for its *shape*, never as a statement about which
-colour is live — read that from the box, per `docs/INFRA_RULES.md` §3.
+**`deploy/apache/datanika-prod-active.conf.example` is a snapshot of a value that alternates.**
+`deploy-bluegreen.sh` rewrites `/etc/apache2/conf-enabled/datanika-prod-active.conf` on every swap.
+The example records a shape, never which colour is live — read that from the box, per
+`docs/INFRA_RULES.md` §3. It does not live in this directory, and `sync-vhosts.sh` does not apply it.
 
 ## `backup-pubkey.asc` is a PUBLIC key, and that is the point
 

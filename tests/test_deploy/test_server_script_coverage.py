@@ -66,28 +66,6 @@ NOT_INSTALLED: dict[str, str] = {
         "revert it, so this trades automation for a rollback that always works "
         "(`rm -rf /etc/systemd/network/10-netplan-eth0.network.d && networkctl reload`)."
     ),
-    "apache-prod-active-ports.conf": (
-        "A snapshot of a value that ALTERNATES. deploy-bluegreen.sh rewrites the live file "
-        "on every swap; this copy is here for its shape, never as a statement about which "
-        "colour is serving. Installing it would overwrite the swap's own output."
-    ),
-    # core#745. These two are byte-identical DUPLICATES of deploy/apache/, which is the
-    # directory sync-vhosts.sh actually reads. They are pinned identical below rather than
-    # merely excused, so the day somebody edits the copy that does nothing, CI says so.
-    "apache-app.datanika.io.conf": (
-        "core#745: a duplicate of deploy/apache/app.datanika.io.conf, which is what "
-        "sync-vhosts.sh installs. Pinned byte-identical by "
-        "test_the_apache_duplicates_have_not_drifted."
-    ),
-    "apache-staging-app.datanika.io.conf": (
-        "core#745: a duplicate of deploy/apache/staging-app.datanika.io.conf. Same pin."
-    ),
-}
-
-# core#745's duplicate pairs: the decoy in deploy/server/ -> the real one in deploy/apache/.
-APACHE_DUPLICATES = {
-    "apache-app.datanika.io.conf": "app.datanika.io.conf",
-    "apache-staging-app.datanika.io.conf": "staging-app.datanika.io.conf",
 }
 
 
@@ -327,18 +305,23 @@ def test_an_exemption_reason_that_names_an_installer_references_the_file():
     )
 
     contrast = claimed_installers_omitting(
-        "apache-prod-active-ports.conf",
-        NOT_INSTALLED["apache-prod-active-ports.conf"],
+        "not-the-live-ports-file.conf",
+        "A snapshot of a value that ALTERNATES. deploy-bluegreen.sh rewrites the live "
+        "file on every swap; this copy is here for its shape, never as a statement "
+        "about which colour is serving.",
     )
     assert contrast == [], (
         "mentioning deploy-bluegreen.sh as the writer of a different live file is not "
         f"a claim that it installs this copy; the helper returned {contrast}"
     )
 
-    assert len(NOT_INSTALLED) >= 4, (
-        "NOT_INSTALLED is too small to be the map this test reads. Skipping the dict "
-        "would make the assertion below pass on nothing."
-    )
+    # The three names are the real exemptions. A floor of "at least N" with no names
+    # can be satisfied by a map that dropped the file the deploy still has to explain.
+    assert set(NOT_INSTALLED) >= {
+        "README.md",
+        "deploy-pointer.sh",
+        "networkd-99-datanika-dns.conf",
+    }, sorted(NOT_INSTALLED)
     problems = [
         f"{name} -> {token}"
         for name, reason in sorted(NOT_INSTALLED.items())
@@ -350,66 +333,53 @@ def test_an_exemption_reason_that_names_an_installer_references_the_file():
     )
 
 
-def test_the_apache_duplicates_have_not_drifted():
-    """core#745: deploy/server/ holds copies of vhosts sync-vhosts.sh does NOT read.
+def _normalized(path: Path) -> bytes:
+    """Working-tree bytes with CRLF folded to LF.
 
-    `sync-vhosts.sh` reads `deploy/apache/`. The two vhosts in `deploy/server/` are
-    duplicates that no workflow applies, sitting under a README that used to claim
-    sync-vhosts.sh applied them. They are identical today, which is exactly what makes them
-    harmless *now* and dangerous later: edit the copy in `deploy/server/` and the change is
-    real, reviewed, merged, deployed — and has no effect on any vhost.
-
-    Pinning them byte-identical converts that latent decoy into one that announces itself.
-
-    ⚠️ Line endings are normalised before comparing, and that is core#1076 (measured
-    2026-09-04, after the `.gitattributes` fix shipped). The first version of this test
-    compared raw working-tree bytes, which on Windows is **not a property of the repository
-    at all** — it is a property of when each file was last written to disk. `core.autocrlf`
-    is `true` machine-wide here, so a file checked out before its `text eol=lf` rule existed
-    stays CRLF, and one checked out after is LF. The two paths below are the *same git
-    object* (`i/lf` on both, identical blob OIDs) and the test still failed, refusing every
-    department's push while passing in CI, where Linux materialises both as LF.
-
-    🔑 `21e6b01c` added the missing `deploy/server/*.conf text eol=lf` rule and is correct
-    and necessary — but it does **not** fix an existing checkout, and cannot. With `text`
-    set, git's filter normalises on read, so a CRLF working copy compares equal to the index
-    and reads as *unmodified*; no checkout, pull or branch switch will ever re-materialise
-    it. Verified: switching to `origin/master` and back across the fix left
-    `deploy/server/apache-app.datanika.io.conf` at `w/crlf` beside `deploy/apache/` at
-    `w/lf`. The only thing that clears it is `rm` + `git checkout -- deploy/server/`.
-
-    So the byte comparison had two possible reds and only one of them was drift. Content
-    equality is the property this test names, and it is what is compared now;
-    `test_the_deployed_conf_files_are_pinned_to_lf` below owns the line-ending half, at the
-    layer that actually decides it.
+    core#1076: on this machine `core.autocrlf=true` can leave one side of a pair as
+    CRLF and the other as LF while both blobs are `i/lf`. A raw compare then fails
+    for a checkout accident. Content equality is what this guard names.
     """
-    # Anti-vacuity (core#1089 AC4, carried from the closed PR #1082): an empty or emptied
-    # APACHE_DUPLICATES makes the loop below assert nothing while still reporting green,
-    # and it is also the floor the pinning guard's own walk is measured against.
-    assert len(APACHE_DUPLICATES) >= 2, (
-        f"APACHE_DUPLICATES holds {len(APACHE_DUPLICATES)} pair(s). core#745 has two decoy "
-        f"vhosts; fewer means either one was deleted (resolve #745 and delete this test) or "
-        f"the mapping was truncated, in which case this test compares nothing."
-    )
+    return path.read_bytes().replace(b"\r\n", b"\n")
 
-    for decoy, real in APACHE_DUPLICATES.items():
-        a = (SERVER_DIR / decoy).read_bytes().replace(b"\r\n", b"\n")
-        b = (APACHE_DIR / real).read_bytes().replace(b"\r\n", b"\n")
-        assert a == b, (
-            f"deploy/server/{decoy} has drifted from deploy/apache/{real}.\n"
-            f"Only deploy/apache/ is read by scripts/sync-vhosts.sh, so whichever of these "
-            f"you just edited, the one that reaches Apache is deploy/apache/{real}.\n"
-            f"Resolve core#745 by deleting the deploy/server/ copy, or re-sync the two.\n"
-            f"(Line endings are normalised before this comparison, so a CRLF checkout is "
-            f"NOT what you are looking at — this is a real content difference.)"
-        )
+
+def test_no_file_under_deploy_server_duplicates_a_file_under_deploy_apache():
+    """core#745: nothing in deploy/server/ is a second copy of a file in deploy/apache/.
+
+    `scripts/sync-vhosts.sh` reads `deploy/apache/` and nothing in `deploy/server/`.
+    The decoy names differ from the names that script applies, so a name-only check
+    stays green while the copies exist. Compare LF-normalised content instead.
+    """
+    server = [p for p in SERVER_DIR.iterdir() if p.is_file()]
+    apache = [p for p in APACHE_DIR.iterdir() if p.is_file()]
+    # Anti-vacuity: an empty walk makes "no duplicates" true by having nothing to compare.
+    assert {p.name for p in apache} >= {
+        "app.datanika.io.conf",
+        "staging-app.datanika.io.conf",
+        "datanika-prod-active.conf.example",
+    }, sorted(p.name for p in apache)
+    assert len(server) >= 8, sorted(p.name for p in server)
+
+    by_body: dict[bytes, list[str]] = {}
+    for path in apache:
+        by_body.setdefault(_normalized(path), []).append(f"deploy/apache/{path.name}")
+
+    dupes = [
+        f"deploy/server/{path.name} == {by_body[body]}"
+        for path in server
+        if (body := _normalized(path)) in by_body
+    ]
+    assert not dupes, (
+        "deploy/server/ holds a second copy of a file deploy/apache/ already has, and "
+        "sync-vhosts.sh reads only deploy/apache/:\n" + "\n".join(dupes)
+    )
 
 
 def test_the_deployed_conf_files_are_pinned_to_lf():
     """core#1076: every file here is deployed to a Linux box, so it must be `eol=lf`.
 
     This is the guard that would have caught #1076 in the first place, and it is deliberately
-    at a different layer from the drift test above. That one compares *content* and is now
+    at a different layer from the duplication test above. That one compares *content* and is
     immune to line endings; this one asserts the **cause** — that `.gitattributes` pins each
     deployed file to LF — so the two cannot both be satisfied by the same mistake.
 
@@ -432,12 +402,22 @@ def test_the_deployed_conf_files_are_pinned_to_lf():
     predicate.
     """
     paths = _deployed_files()
+    walked = {p.relative_to(ROOT).as_posix() for p in paths}
 
     # Anti-vacuity, and it comes FIRST: a walk that finds nothing would otherwise pass by
-    # having nothing to check. Both directories have held files since core#747.
-    assert len(paths) >= len(APACHE_DUPLICATES) * 2, (
-        f"only {len(paths)} files walked across deploy/server/ + deploy/apache/ — this test "
-        f"cannot have checked the {len(APACHE_DUPLICATES)} pinned vhost pairs"
+    # having nothing to check. These are files the deploy still reads. The floor names
+    # them, so deleting a decoy cannot shrink it to zero.
+    required = {
+        "deploy/server/backup-offsite.sh",
+        "deploy/server/restore-drill.sh",
+        "deploy/server/networkd-99-datanika-dns.conf",
+        "deploy/apache/app.datanika.io.conf",
+        "deploy/apache/staging-app.datanika.io.conf",
+        "deploy/apache/datanika-prod-active.conf.example",
+    }
+    missing = sorted(required - walked)
+    assert not missing, (
+        f"the LF walk dropped files the deploy still reads: {missing}. Walked {len(paths)} path(s)."
     )
 
     rels = [p.relative_to(ROOT).as_posix() for p in paths]
@@ -507,7 +487,7 @@ def test_the_pinning_notices_a_later_rule_that_unsets_text(tmp_path):
       makes `eol == "lf"` a wrong predicate;
     * and `is_pinned_to_lf` therefore rejects it.
     """
-    probe = "deploy/server/apache-app.datanika.io.conf"
+    probe = "deploy/server/networkd-99-datanika-dns.conf"
 
     clean = git_check_attr([probe], _repo_from_real_gitattributes(tmp_path / "a"))[probe]
     assert is_pinned_to_lf(clean), (

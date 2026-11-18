@@ -187,9 +187,18 @@ class UserService:
         while ``users.email`` still holds the previous one. A missing sidecar
         value falls back to the legacy column. This read does not write either.
         """
+
+        def _text(value: object) -> str | None:
+            # Only a stored string is an address. A missing sidecar falls through.
+            return value if isinstance(value, str) and value else None
+
         pii = session.get(UserPII, user.id)
-        email = pii.email if pii is not None and pii.email else user.email
-        full_name = pii.full_name if pii is not None and pii.full_name else user.full_name
+        email = _text(pii.email) if pii is not None else None
+        full_name = _text(pii.full_name) if pii is not None else None
+        if email is None:
+            email = _text(user.email)
+        if full_name is None:
+            full_name = _text(user.full_name)
         return email, full_name
 
     def get_user(self, session: Session, user_id: int) -> User | None:

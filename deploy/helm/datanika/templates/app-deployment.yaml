@@ -53,6 +53,8 @@ spec:
             # upload archive; the worker reads it back (core#529).
             - name: uploaded-files
               mountPath: /app/uploaded_files
+            - name: duckdb
+              mountPath: /var/datanika/duckdb
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
       volumes:
@@ -62,6 +64,9 @@ spec:
         - name: uploaded-files
           persistentVolumeClaim:
             claimName: {{ include "datanika.fullname" . }}-uploaded-files
+        - name: duckdb
+          persistentVolumeClaim:
+            claimName: {{ include "datanika.fullname" . }}-duckdb
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

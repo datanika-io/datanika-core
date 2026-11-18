@@ -287,7 +287,8 @@ def live_session_state(db_session, auth):
         access_token=auth.create_access_token(user.id, orgs[0].id),
         user_orgs=orgs,
     )
-    state.current_user = UserInfo(id=user.id, email=user.email, full_name=user.full_name)
+    email, full_name = UserService.account_address(db_session, user)
+    state.current_user = UserInfo(id=user.id, email=email or "", full_name=full_name or "")
     state.current_org = orgs[0]
     state.current_role = "owner"
     return state
@@ -337,10 +338,10 @@ class TestSignupRefusesALiveSession:
         🚨 It also pins that the guard runs **before** ``register_user`` — the
         spec says before the CAPTCHA check and before any database read.
         """
-        from datanika.models.user import User
+        from datanika.models.pii import UserPII
 
         _run_signup(db_session, auth, live_session_state)
-        assert db_session.query(User).filter(User.email == EMAIL).count() == 0
+        assert db_session.query(UserPII).filter(UserPII.email == EMAIL).count() == 0
 
     def test_it_does_not_sign_the_user_out_first(self, db_session, auth, live_session_state):
         """*"Sign them out, then sign them up"* is the same substitution, renamed."""
@@ -350,11 +351,11 @@ class TestSignupRefusesALiveSession:
     def test_a_signed_out_signup_still_works(self, db_session, auth):
         """🔑 The control. Without it, every assertion above is satisfied by a
         handler that refuses everyone and nobody can create an account at all."""
-        from datanika.models.user import User
+        from datanika.models.pii import UserPII
 
         state = _SignupState(UserService(auth))
         result = _run_signup(db_session, auth, state)
-        assert db_session.query(User).filter(User.email == EMAIL).count() == 1, (
+        assert db_session.query(UserPII).filter(UserPII.email == EMAIL).count() == 1, (
             "an ordinary signup no longer creates an account"
         )
         assert state.access_token, "an ordinary signup no longer establishes a session"

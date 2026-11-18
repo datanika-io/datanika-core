@@ -103,16 +103,25 @@ def org(db_session):
 
 
 def _channel(db_session, org, channel_type, config, events=None):
+    from datanika.models.pii import NotificationChannelPII
+
+    stored = dict(config)
+    recipient = stored.pop("email", None) if channel_type == ChannelType.EMAIL else None
+    if channel_type == ChannelType.TELEGRAM:
+        recipient = stored.pop("chat_id", None)
     ch = NotificationChannel(
         org_id=org.id,
         name=f"{channel_type.value} channel",
         channel_type=channel_type,
-        config=config,
+        config=stored,
         events=events or ["run_failure", "run_success", "quota_warning", "charge_incoming"],
         is_active=True,
     )
     db_session.add(ch)
     db_session.flush()
+    if recipient:
+        db_session.add(NotificationChannelPII(channel_id=ch.id, recipient=str(recipient)))
+        db_session.flush()
     return ch
 
 

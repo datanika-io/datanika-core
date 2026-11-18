@@ -95,9 +95,15 @@ class EmailChangeService:
 
         normalised = _normalise(raw_email)
         pii = self._users.get_user_pii(session, user.id)
-        current = {_normalise(user.email)}
-        if pii is not None:
-            current.add(_normalise(pii.email))
+        # The live address is the sidecar. ``users.email`` is left at the
+        # previous value once a confirmation stops writing it, so treating it
+        # as current would refuse a change back to that address.
+        if pii is not None and pii.email:
+            current = {_normalise(pii.email)}
+        elif user.email:
+            current = {_normalise(user.email)}
+        else:
+            current = set()
         current.discard("")
 
         # Visible on purpose. See the module docstring.
@@ -196,9 +202,7 @@ class EmailChangeService:
         if not self._claim(session, row):
             return None
 
-        # Both copies. The login lookup reads either column during the
-        # dual-write window, so writing one of them leaves the old address live.
-        user.email = normalised
+        # The account address is the sidecar. ``users.email`` stays as it was.
         pii.email = normalised
         pii.pending_email = None
         # The click is the proof. Asking them to verify the same address again

@@ -2,7 +2,6 @@
 
 import logging
 
-from sqlalchemy import select as sa_select
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from starlette.routing import Route
@@ -59,7 +58,6 @@ async def accept_invite(request: Request) -> RedirectResponse:
         )
 
     try:
-        from datanika.models.user import User
         from datanika.services.invitation_service import InvitationService
         from datanika.ui.state.base_state import get_sync_session
 
@@ -72,10 +70,13 @@ async def accept_invite(request: Request) -> RedirectResponse:
                     url=f"{settings.frontend_url}/login?invite_error=1", status_code=302
                 )
 
-            # Check if user exists
-            user = session.execute(
-                sa_select(User).where(User.email == invitation.email)
-            ).scalar_one_or_none()
+            # The account address is user_pii. A comparison on users.email misses
+            # everyone registered after N+1 stopped writing that column.
+            from datanika.services.user_service import UserService
+
+            user = None
+            if invitation.email:
+                user = UserService(_auth).get_user_by_email(session, invitation.email)
 
             if user is None:
                 # User needs to register first — redirect to signup with token + email

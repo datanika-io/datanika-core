@@ -262,8 +262,11 @@ class TestSetPasswordForOAuthOnlyAccount:
         )
         svc.change_password(db_session, u.id, "a password bob picked")
         db_session.flush()
+        from datanika.models.pii import UserPII
+
         assert u.oauth_provider == "google"
-        assert u.oauth_provider_id == "g-1"
+        assert u.oauth_provider_id is None
+        assert db_session.get(UserPII, u.id).oauth_provider_id == "g-1"
 
 
 class TestRegisterStampsPasswordChangedAt:

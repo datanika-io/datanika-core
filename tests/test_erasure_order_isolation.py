@@ -21,6 +21,7 @@ test would collide inside the session even when the rollback holds.
 
 from sqlalchemy import select
 
+from datanika.models.pii import UserPII
 from datanika.models.user import Organization
 from datanika.services.auth import AuthService
 from datanika.services.user_service import UserService
@@ -45,7 +46,7 @@ def test_a_prior_test_commits_two_orgs_and_one_user(db_session):
         ).all()
     )
     assert slugs == {"retention-a", "retention-b"}
-    assert user.email == "loop@example.com"
+    assert db_session.get(UserPII, user.id).email == "loop@example.com"
 
 
 def test_b_the_erased_address_can_register_again(db_session):

@@ -4,6 +4,7 @@ import reflex as rx
 
 from datanika.config import settings
 from datanika.ui.components.captcha import captcha_script
+from datanika.ui.components.language_switcher import language_switcher
 from datanika.ui.components.layout import legal_links
 from datanika.ui.components.secure_input import autofill_attrs
 from datanika.ui.components.social_auth import social_login_row
@@ -56,6 +57,7 @@ def login_page() -> rx.Component:
     return rx.center(
         rx.el.main(
             rx.vstack(
+                language_switcher(),
                 rx.hstack(
                     rx.image(src="/logo.png", alt="Datanika", width="48px", height="48px"),
                     rx.heading(_t["app.name"], size="7"),

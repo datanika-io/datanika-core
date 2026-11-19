@@ -34,6 +34,7 @@ from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.dashboard_state import DashboardState
 from datanika.ui.state.email_change_state import EmailChangeState
+from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.mcp_consent_state import McpConsentState
 from datanika.ui.state.model_detail_state import ModelDetailState
 from datanika.ui.state.model_state import ModelState
@@ -118,13 +119,17 @@ app.add_page(
     login_page,
     route="/login",
     title="Login | Datanika",
-    on_load=[AuthState.redirect_if_signed_in],
+    on_load=[I18nState.ensure_loaded, AuthState.redirect_if_signed_in],
 )
 app.add_page(
     signup_page,
     route="/signup",
     title="Sign Up | Datanika",
-    on_load=[AuthState.redirect_if_signed_in, AuthState.prefill_invite_email],
+    on_load=[
+        I18nState.ensure_loaded,
+        AuthState.redirect_if_signed_in,
+        AuthState.prefill_invite_email,
+    ],
 )
 # Account recovery (core#623). Public by design — a signed-out user is the only
 # kind that can need them, so neither carries AuthState.check_auth.
@@ -137,7 +142,7 @@ app.add_page(
     forgot_password_page,
     route="/forgot-password",
     title="Reset your password | Datanika",
-    on_load=[PasswordResetState.check_availability],
+    on_load=[I18nState.ensure_loaded, PasswordResetState.check_availability],
 )
 app.add_page(
     reset_password_page,
@@ -145,7 +150,7 @@ app.add_page(
     title="Set a new password | Datanika",
     # Validates the token for rendering only, and never consumes it — mail
     # scanners prefetch this URL before the recipient ever clicks it.
-    on_load=[PasswordResetState.load_token],
+    on_load=[I18nState.ensure_loaded, PasswordResetState.load_token],
 )
 # Same shape as /reset-password: a public Reflex page, validated on load,
 # consumed by the button. A backend GET would be prefetched by mail scanners

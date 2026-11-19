@@ -16,6 +16,7 @@
   "nav.settings": "Подешавања",
   "nav.switch_org": "Организација",
   "nav.sign_out": "Одјави се",
+  "locale.search": "Језик",
   "legal.terms": "Услови коришћења",
   "legal.privacy": "Политика приватности",
   "legal.signup_agreement": "Креирањем налога прихватате следеће: {terms} и {privacy}.",

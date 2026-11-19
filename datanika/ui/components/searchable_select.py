@@ -10,7 +10,7 @@ def searchable_select(
     value: rx.Var[str],
     on_change: rx.EventHandler,
     placeholder: rx.Var[str] | str = "",
-    search_placeholder: str = "Search...",
+    search_placeholder: rx.Var[str] | str = "Search...",
     width: str = "100%",
     size: str = "2",
 ) -> rx.Component:
@@ -26,7 +26,11 @@ def searchable_select(
     # listener would bind to a node the browser had already dropped.
     fn = getattr(on_change, "fn", on_change)
     handler = getattr(fn, "__name__", "") or ""
-    uid = f"ss_{hash(f'{placeholder}|{search_placeholder}|{handler}') % 100000}"
+    # A Var's repr carries a memory address, so hashing it would mint a new id
+    # on every server render and the listener would bind to a dropped node.
+    placeholder_key = placeholder if isinstance(placeholder, str) else "placeholder"
+    search_key = search_placeholder if isinstance(search_placeholder, str) else "search"
+    uid = f"ss_{hash(f'{placeholder_key}|{search_key}|{handler}') % 100000}"
     input_id = f"{uid}_input"
     list_id = f"{uid}_list"
 

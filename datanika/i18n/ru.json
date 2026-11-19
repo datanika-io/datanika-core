@@ -16,6 +16,7 @@
   "nav.settings": "Настройки",
   "nav.switch_org": "Организация",
   "nav.sign_out": "Выйти",
+  "locale.search": "Язык",
   "legal.terms": "Условия использования",
   "legal.privacy": "Политика конфиденциальности",
   "legal.signup_agreement": "Создавая аккаунт, вы соглашаетесь с нашими документами: {terms} и {privacy}.",

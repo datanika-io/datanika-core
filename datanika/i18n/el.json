@@ -16,6 +16,7 @@
   "nav.settings": "Ρυθμίσεις",
   "nav.switch_org": "Οργανισμός",
   "nav.sign_out": "Αποσύνδεση",
+  "locale.search": "Γλώσσα",
   "legal.terms": "Όροι χρήσης",
   "legal.privacy": "Πολιτική απορρήτου",
   "legal.signup_agreement": "Δημιουργώντας λογαριασμό, αποδέχεστε τα εξής: {terms} και {privacy}.",

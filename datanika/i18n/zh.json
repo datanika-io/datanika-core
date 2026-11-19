@@ -16,6 +16,7 @@
   "nav.settings": "设置",
   "nav.switch_org": "组织",
   "nav.sign_out": "退出登录",
+  "locale.search": "语言",
   "legal.terms": "服务条款",
   "legal.privacy": "隐私政策",
   "legal.signup_agreement": "创建账户即表示您同意我们的{terms}和{privacy}。",

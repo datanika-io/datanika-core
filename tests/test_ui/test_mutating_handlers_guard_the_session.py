@@ -47,6 +47,10 @@ STATE_DIR = pathlib.Path(datanika.ui.state.__file__).parent
 
 SESSION_GUARDS = ("_check_role", "_require_live_session")
 
+# core#670. login and logout commit inside this private helper. The helper is
+# not a Reflex handler; the public handlers that call it are the writers.
+COMMIT_THROUGH = frozenset({"_write_auth_audit"})
+
 # Handlers that write while signed OUT. Guarding any of these is a defect, so
 # each carries the reason it is here rather than a bare name.
 UNAUTHENTICATED: dict[tuple[str, str, str], str] = {
@@ -109,7 +113,7 @@ def _committing_handlers() -> list[dict]:
                 if fn.name.startswith("_"):
                     continue
                 calls = _call_names(fn)
-                if "commit" not in calls:
+                if "commit" not in calls and not (calls & COMMIT_THROUGH):
                     continue
                 found.append(
                     {
@@ -152,6 +156,19 @@ def test_every_allowlist_entry_matches_a_real_handler():
         "these allowlist entries name no committing handler any more — delete "
         f"them or fix the name: {stale}"
     )
+
+
+def test_a_commit_inside_the_auth_audit_helper_still_counts():
+    """login and logout commit inside ``_write_auth_audit`` (core#670).
+
+    The helper is private. It is not a Reflex event handler, so it must not
+    become an unauthenticated entry point of its own. The handlers that call
+    it still write, and they stay on the allowlist.
+    """
+    live = {h["key"] for h in _committing_handlers()}
+    assert ("auth_state.py", "AuthState", "login") in live
+    assert ("auth_state.py", "AuthState", "logout") in live
+    assert all(name != "_write_auth_audit" for _file, _cls, name in live)
 
 
 def test_every_committing_handler_guards_the_session():

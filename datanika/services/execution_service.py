@@ -365,10 +365,11 @@ class ExecutionService:
         happened — ``rows_loaded = 0`` and a log line saying the engine never ran — which is a
         measurement, not an unknown. Its status is already ``CANCELLED`` and stays so.
 
-        ⚠️ This stops a run that has not reached its engine. A run already inside
-        ``pipeline.run()`` or a dbt invoke is not stopped by anything here: both are single opaque
-        calls and §6 rules revocation out. Reporting this as "cancellation stops runs" is the
-        overclaim §7.2 warns about.
+        ⚠️ This stops a run that has not reached its engine. It is the pre-flight checkpoint.
+        The mid-flight stop is ``stop_further_chunks``, which drops a dlt chunk that arrives
+        after the cancel is visible and keeps rows already written. A dbt invoke already in
+        progress is still one call and finishes. Do not rename this method and call that the
+        mid-flight stop. ``revoke(terminate=True)`` stays out (§6).
         """
         if not self.is_cancelled_now(session, org_id, run_id):
             return False

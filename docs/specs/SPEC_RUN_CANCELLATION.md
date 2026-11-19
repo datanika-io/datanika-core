@@ -242,6 +242,12 @@ must then clean up, and hiding that is how a stop button becomes a support ticke
 >    `test_work_already_in_progress_is_said_to_run_to_the_end` is the assertion that will go red on
 >    the correct change, which puts whoever builds 2b in front of this paragraph.
 
+### 2b shipped for loads, 2026-11-19
+
+The flip condition above is met for dlt loads. A cancel that becomes visible between chunks drops the chunk not yet handed to the loader and closes the source generator. Rows already written stay. `rows_loaded` is that partial count. The witness is `tests/test_tasks/test_midflight_cancel_checkpoint.py`: a four-row file, one-row chunks, cancel before the second chunk, destination row count 1. D3's sentence is what `CANCEL_EFFECT` says. The old reader `test_work_already_in_progress_is_said_to_run_to_the_end` went red and is now `test_work_already_in_progress_stops_further_loading`.
+
+What this does not do: one dbt invoke is still one call. A model already running finishes. Later loads do not start. `app.control.revoke(terminate=True)` stays forbidden (§6). The pre-flight check stays `skip_if_cancelled` and is still the check that yields zero destination rows. This note does not rename it. D3a above stays as the record of the sentence that shipped before this stop.
+
 ### D4 — No new column; `updated_at` is the cancellation clock *(new)*
 
 The reaper in §3.1 needs to know how long a run has been trying to stop. `TimestampMixin` already
@@ -498,6 +504,8 @@ carried forward and renumbered here.
    the exact place a checkpoint goes**, so the trigger does not depend on anyone remembering this
    spec. ⚠️ If that work is abandoned, 2b becomes *"deferred indefinitely, no watcher"* and should say
    so in those words ([core#735]).
+
+   **Met for loads, 2026-11-19.** dlt already yields chunks. `stop_further_chunks` sits on the resource after the chunk that would be loaded, closes the generator once the run row says stop, and leaves the loaded chunk in the destination. The census above was measured before that gate. A single dbt invoke is still the opaque call this paragraph describes, and it still finishes.
 3. **Negative controls: an ordinary run still ends `SUCCESS`, and a failing one still ends `FAILED`.**
    The fix touches the completion path every run takes.
 4. **The status-set guard of §4 exists and was demonstrated red** against a throwaway eighth status.

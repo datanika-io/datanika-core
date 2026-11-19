@@ -182,11 +182,13 @@ Content-Type: application/json
   The serialised run is the body in all three cases, so `status` and
   `error_message` remain the source of truth. Without `?wait=true` the trigger
   still returns `202` immediately and says nothing about the outcome.
-- **Do not cancel and re-trigger a slow run.** `POST /runs/{{id}}/cancel`
-  stops a run only if its work has not started yet, and does not interrupt a
-  run that is already working: that run reads `cancelling` and runs to its end.
-  So re-triggering runs the same job a second time beside the first. Wait with
-  `?wait=true`, or poll `GET /runs/{{id}}`.
+- **Do not cancel and then retry an append to clear a slow run.**
+  `POST /runs/{{id}}/cancel` stops further loading. A run that has not started its work yet
+  stops before anything is read or written. Rows already written stay in the destination,
+  and later loads do not start. A model already running finishes. A re-run that appends
+  duplicates those partial rows; replace overwrites them; merge reconciles on the primary
+  key. Cancelling and then retrying an append does not clear the rows already written.
+  Poll `GET /runs/{{id}}`.
 - **Introspect before building** — list source tables and columns
   before writing the upload config. Don't guess table names.
 

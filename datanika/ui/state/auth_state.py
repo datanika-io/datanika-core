@@ -180,6 +180,52 @@ class AuthState(rx.State):
         except Exception:
             return ""
 
+    def _write_auth_audit(self, org_id: int, user_id: int | None, action) -> None:
+        """One authentication audit, plus the client address when we can name it.
+
+        ``AuditAction(action)`` is the chokepoint the call-site sweep recognises:
+        a value that is not one of the six members raises here, and the caller's
+        swallow logs it, instead of a new enum member landing in a column the
+        previously deployed container cannot read.
+        """
+        from datanika.models.audit_log import AuditAction
+        from datanika.services.audit_service import AuditService, record_client_address
+
+        with get_sync_session() as audit_session:
+            log = AuditService().log_action(
+                audit_session,
+                org_id,
+                user_id,
+                AuditAction(action),
+                "session",
+            )
+            record_client_address(audit_session, log.id, self._client_ip())
+            audit_session.commit()
+
+    def _audit_failed_sign_in(self, email: str) -> None:
+        """A rejected password for an account we can place in an org.
+
+        An unknown address has no org to hang the row on, and inventing one
+        would name a tenant the attempt never reached. The address, when the
+        resolver returns one, goes to the sidecar only.
+        """
+        from datanika.models.audit_log import AuditAction
+
+        try:
+            svc = self._get_user_service()
+            with get_sync_session() as session:
+                user = svc.get_user_by_email(session, email)
+                if user is None:
+                    return
+                orgs = svc.get_user_orgs(session, user.id)
+                if not orgs:
+                    return
+                org_id = orgs[0].id
+                user_id = user.id
+            self._write_auth_audit(org_id, user_id, AuditAction.LOGIN)
+        except Exception:
+            logger.exception("Audit write failed and was dropped: action=LOGIN outcome=failed")
+
     def prefill_invite_email(self):
         """Pre-fill email from invite link query param."""
         email = self.router.page.params.get("email", "")
@@ -396,23 +442,15 @@ class AuthState(rx.State):
 
         if result is None:
             self.auth_error = "Invalid email or password"
+            self._audit_failed_sign_in(email)
             return
 
         # Audit login
         try:
             from datanika.models.audit_log import AuditAction
-            from datanika.services.audit_service import AuditService
 
-            with get_sync_session() as audit_session:
-                org_id_for_audit = orgs[0].id if orgs else 0
-                AuditService().log_action(
-                    audit_session,
-                    org_id_for_audit,
-                    user_id,
-                    AuditAction.LOGIN,
-                    "session",
-                )
-                audit_session.commit()
+            org_id_for_audit = orgs[0].id if orgs else 0
+            self._write_auth_audit(org_id_for_audit, user_id, AuditAction.LOGIN)
         except Exception:
             # Deliberate swallow, loud failure (core#723): a broken audit write
             # must not stop a login, but it must not vanish either.
@@ -628,6 +666,7 @@ class AuthState(rx.State):
                 result = svc.authenticate(session, email, password)
                 if result is None:
                     self.auth_error = "Signup succeeded but login failed"
+                    self._audit_failed_sign_in(email)
                     return
                 self.access_token = result["access_token"]
                 self.refresh_token = result["refresh_token"]
@@ -692,18 +731,11 @@ class AuthState(rx.State):
         # Audit logout before clearing state
         try:
             from datanika.models.audit_log import AuditAction
-            from datanika.services.audit_service import AuditService
 
             if self.current_user.id and self.current_org.id:
-                with get_sync_session() as audit_session:
-                    AuditService().log_action(
-                        audit_session,
-                        self.current_org.id,
-                        self.current_user.id,
-                        AuditAction.LOGOUT,
-                        "session",
-                    )
-                    audit_session.commit()
+                self._write_auth_audit(
+                    self.current_org.id, self.current_user.id, AuditAction.LOGOUT
+                )
         except Exception:
             # As with LOGIN above: swallow, but leave evidence (core#723).
             logger.exception("Audit write failed and was dropped: action=LOGOUT")

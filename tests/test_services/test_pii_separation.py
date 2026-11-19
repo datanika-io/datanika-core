@@ -25,7 +25,7 @@ from sqlalchemy import text
 
 from datanika.models.invitation import Invitation, InvitationStatus
 from datanika.models.notification_channel import ChannelType
-from datanika.models.pii import InvitationPII, NotificationChannelPII, UserPII
+from datanika.models.pii import AuditLogPII, InvitationPII, NotificationChannelPII, UserPII
 from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import AuthService
 from datanika.services.invitation_service import InvitationService, hash_invitation_token
@@ -493,7 +493,7 @@ class TestOrganizationModel:
         deletion is a trap waiting to be read as "erased" while the row is still there —
         and a soft-deleted row is still a row in `pg_dump`, in a backup, and to a
         regulator."""
-        for model in (UserPII, InvitationPII, NotificationChannelPII):
+        for model in (UserPII, InvitationPII, NotificationChannelPII, AuditLogPII):
             assert not hasattr(model, "deleted_at"), (
                 f"{model.__name__} has a deleted_at column. These tables are hard-deleted; "
                 "a soft-delete marker here is how an erasure silently becomes a hide."
@@ -508,17 +508,19 @@ class TestOrganizationModel:
             "user_pii",
             "invitation_pii",
             "notification_channel_pii",
+            "audit_log_pii",
             "email_change_requests",
         ):
             assert name in PUBLIC_TABLES
 
-    def test_audit_log_pii_is_not_built(self):
-        """§2a / D11, criterion 1. It would protect `audit_logs.ip_address`, which is
-        populated in **0 of 117** production rows. Three tables ship, not four; the
-        sidecar lands with core#670, when there is data to protect."""
+    def test_audit_log_pii_holds_the_sign_in_address(self):
+        """core#670. D11 left this table unbuilt until collection started. The
+        address is a column here, not ``audit_logs.ip_address``."""
         from datanika.models.base import Base
 
-        assert "audit_log_pii" not in Base.metadata.tables
+        table = Base.metadata.tables["audit_log_pii"]
+        assert "ip_address" in table.c
+        assert "deleted_at" not in table.c
         assert Organization is not None  # keeps the import honest
 
 

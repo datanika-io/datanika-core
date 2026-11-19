@@ -54,6 +54,7 @@ from datanika.models.notification import Notification
 from datanika.models.notification_channel import NotificationChannel
 from datanika.models.password_reset import PasswordResetToken
 from datanika.models.pii import (
+    AuditLogPII,
     EmailChangeRequest,
     InvitationPII,
     NotificationChannelPII,
@@ -264,6 +265,13 @@ def _tear_down_fixture(session: Session) -> None:
     if org_ids:
         # All TenantMixin children must be deleted before Organization.
         # Order: leaf tables first (no dependents), then FK parents last.
+        session.execute(
+            AuditLogPII.__table__.delete().where(
+                AuditLogPII.audit_log_id.in_(
+                    select(AuditLog.id).where(AuditLog.org_id.in_(org_ids))
+                )
+            )
+        )
         session.execute(AuditLog.__table__.delete().where(AuditLog.org_id.in_(org_ids)))
         session.execute(Run.__table__.delete().where(Run.org_id.in_(org_ids)))
         session.execute(Notification.__table__.delete().where(Notification.org_id.in_(org_ids)))

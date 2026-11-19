@@ -1,16 +1,19 @@
 """DltRunnerService — builds dlt pipeline/source/destination and executes pipelines."""
 
 import datetime
+import inspect
 import logging
 import os
 import re
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from decimal import Decimal
 from pathlib import PurePosixPath
 
 import dlt
 from dlt.common import json as dlt_json
+from dlt.extract.items_transform import BaseItemTransform, ItemTransform
+from dlt.extract.utils import wrap_iterator
 from dlt.sources.filesystem import filesystem, read_csv, read_parquet
 from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
@@ -38,6 +41,66 @@ from datanika.services.write_disposition import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 10_000
+
+
+class _StopFurtherChunks(ItemTransform):
+    """Drop chunks once a stop has been requested, and close the source generator.
+
+    The chunk already returned stays with the loader. Closing the generator is what
+    stops the next read. Raising would abort the extract before that load, which
+    leaves the destination empty — the pre-flight outcome, not a partial one.
+    ``revoke(terminate=True)`` is not used: killing the worker mid-load is the
+    uncheckpointed state ``SPEC_RUN_CANCELLATION`` §6 rules out.
+
+    ``BaseItemTransform.__init__`` rather than ``ItemTransform.__init__``: the latter
+    requires a transform function, and ``LimitItem`` skips it the same way.
+    """
+
+    # After incremental and after ``LimitItem`` (1.1), so this sees the chunk that
+    # would actually be loaded.
+    placement_affinity = 1.2
+
+    def __init__(self, cancel_check: Callable[[], bool]) -> None:
+        BaseItemTransform.__init__(self)
+        self.cancel_check = cancel_check
+        self._stopped = False
+        self.gen: Iterator | None = None
+
+    def bind(self, pipe):
+        if isinstance(pipe.gen, Iterator):
+            pipe.replace_gen(wrap_iterator(pipe.gen))
+        self.gen = pipe.gen
+        return self
+
+    def __call__(self, item, meta=None):
+        if item is None or self._stopped:
+            return None
+        if self.cancel_check():
+            self._stopped = True
+            gen = self.gen
+            if gen is not None and inspect.isgenerator(gen):
+                gen.close()
+            return None
+        return item
+
+
+def stop_further_chunks(source: object, cancel_check: Callable[[], bool] | None) -> None:
+    """Install the mid-flight gate on a dlt source or resource. ``None`` installs nothing."""
+    if cancel_check is None:
+        return
+    resources = getattr(source, "resources", None)
+    if resources is not None and hasattr(resources, "values"):
+        targets = list(resources.values())
+    elif hasattr(source, "add_step"):
+        targets = [source]
+    else:
+        return
+    for resource in targets:
+        add_step = getattr(resource, "add_step", None)
+        if add_step is None:
+            continue
+        add_step(_StopFurtherChunks(cancel_check))
+
 
 SUPPORTED_FILE_TYPES = {"s3", "csv", "json", "parquet"}
 
@@ -3364,6 +3427,7 @@ class DltRunnerService:
         dataset_name: str | None = None,
         run_id: int | None = None,
         pipeline_name: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> dict:
         """Execute a dlt pipeline.
 
@@ -3435,6 +3499,10 @@ class DltRunnerService:
         # core#1439. Last, so it sees every hint applied above — a merge_config primary key is set
         # here, not in `build_source`, and it is as much a sorting key as a reflected one.
         refuse_a_nullable_key(source, destination_type)
+        # SPEC_RUN_CANCELLATION §7 2b. Inside this call, between chunks: a stop
+        # requested on the run row ends further reads. The chunk already yielded
+        # is loaded. This is not the pre-flight check in ``skip_if_cancelled``.
+        stop_further_chunks(source, cancel_check)
         load_info = pipeline.run(source, **run_kwargs)
         rows_loaded = _extract_rows_loaded(pipeline)
 

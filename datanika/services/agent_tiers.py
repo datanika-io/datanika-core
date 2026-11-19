@@ -160,12 +160,14 @@ TIERS: tuple[Tier, ...] = (
             ),
             Capability(
                 name="Control",
-                # core#1354 / core#657. Cancelling stops a run whose work has not started — the
-                # pre-flight checkpoint — and does not interrupt one already working, which is the
-                # run an agent calls "stuck". Say both, so this never reads as a remedy for it.
+                # core#1354 / core#657. Further loading stops; rows already written stay. An
+                # append re-run duplicates those rows, so cancel-then-retry is not a cleanup.
                 description=(
-                    "Cancel runs whose work has not started (a run already working is not "
-                    "interrupted), monitor run history, stream logs, browse the data catalog."
+                    "Stop further loading: rows already written stay. A run that has not "
+                    "started does not read or write. A model already running finishes, and an "
+                    "append re-run duplicates the partial rows. Do not cancel and then retry "
+                    "an append to clear them. Monitor run history, stream logs, browse the "
+                    "data catalog."
                 ),
                 endpoints=(
                     "POST /api/v1/runs/{id}/cancel",

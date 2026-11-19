@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from datanika.services.ir.schema import IR
@@ -65,6 +66,7 @@ def stream_to_raw(
     destination_config: dict,
     source_type: str,
     destination_type: str,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> StreamStats:
     """Stream source data to destination's raw schema via Arrow/parquet.
 
@@ -78,7 +80,7 @@ def stream_to_raw(
     lander = get_lander(destination_type)
 
     # Use dlt's source readers in Arrow mode for extraction.
-    from datanika.services.dlt_runner import DltRunnerService
+    from datanika.services.dlt_runner import DltRunnerService, stop_further_chunks
 
     runner = DltRunnerService()
     dlt_config = {
@@ -94,6 +96,10 @@ def stream_to_raw(
         dlt_config["source_schema"] = ir.source.schema
 
     source = runner.build_source(source_type, source_config, dlt_config, batch_size=10000)
+    # Same between-chunk gate as the ETL runner. The lander pulls this source;
+    # a stop closes it after the chunk already handed over, which a lander that
+    # commits per batch has already written.
+    stop_further_chunks(source, cancel_check)
 
     # Land to raw via destination adapter.
     stats = lander.land(

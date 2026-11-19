@@ -440,7 +440,7 @@
   "runs.logs_run": "Logs — Run #",
   "runs.cancel": "Cancel",
   "runs.cancel_title": "Stop this run?",
-  "runs.cancel_body": "A run that has not started its work yet stops before anything is read or written. Work already in progress cannot be interrupted: it runs to the end, and the run is then marked cancelled. Data already written to your destination stays there, so a re-run that appends loads those rows again.",
+  "runs.cancel_body": "A run that has not started its work yet stops before anything is read or written. Cancelling stops further loading. Data already written to your destination stays there. A model already running finishes; later loads do not start. Re-running the pipeline reloads from the source according to the pipeline's write disposition — replace overwrites it, append will duplicate the partial rows, merge reconciles on the primary key.",
   "runs.cancel_billing": "You are billed for what was processed before the run stopped.",
   "runs.cancel_confirm": "Stop this run",
   "runs.cancel_keep": "Keep running",

@@ -254,8 +254,8 @@ SCHEMAS = {
                 "type": "string",
                 "enum": _RUN_STATUSES,
                 "description": (
-                    "`cancelled` if the run had not started; `cancelling` while work already "
-                    "in progress runs to its end."
+                    "`cancelled` once further loading has stopped; `cancelling` after a stop was "
+                    "requested, until the worker confirms it."
                 ),
             },
             "started_at": _TS,

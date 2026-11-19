@@ -336,8 +336,13 @@ class TestOrgProvenance:
         assert backup["org"]["name"] == "Acme Redaction"
         assert backup["org"]["slug"] == "acme-redaction"
 
-    def test_version_was_bumped_for_the_new_envelope(self):
-        assert BACKUP_VERSION >= 3
+    def test_version_was_bumped_for_the_new_envelope(self, db_session, encryption, org):
+        # Reads the exported document. Comparing the constant with 3 stays
+        # green when the export writes another version.
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
+        assert backup["version"] == 3
 
     def test_same_org_is_not_foreign(self, db_session, encryption, org):
         backup = BackupService.export_backup(

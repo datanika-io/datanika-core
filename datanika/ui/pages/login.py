@@ -57,7 +57,7 @@ def login_page() -> rx.Component:
     return rx.center(
         rx.el.main(
             rx.vstack(
-                language_switcher(),
+                language_switcher(suppress_autofill=False),
                 rx.hstack(
                     rx.image(src="/logo.png", alt="Datanika", width="48px", height="48px"),
                     rx.heading(_t["app.name"], size="7"),

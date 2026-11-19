@@ -3,6 +3,7 @@
 from pydantic import BaseModel
 
 from datanika.models.notification_channel import ChannelType
+from datanika.models.pii import NotificationChannelPII
 from datanika.services.notification_service import NotificationService
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.base_state import BaseState, get_sync_session
@@ -283,6 +284,8 @@ class NotificationState(BaseState):
             if ch is None:
                 return
             config = ch.config or {}
+            pii = session.get(NotificationChannelPII, ch.id)
+            recipient = "" if pii is None or not pii.recipient else pii.recipient
             self.editing_id = ch.id
             self.form_name = ch.name
             ct = ch.channel_type.value
@@ -292,9 +295,9 @@ class NotificationState(BaseState):
             self.form_webhook_url = config.get("webhook_url", "")
         elif ct == "telegram":
             self.form_telegram_token = config.get("token", "")
-            self.form_telegram_chat_id = config.get("chat_id", "")
+            self.form_telegram_chat_id = recipient
         elif ct == "email":
-            self.form_email = config.get("email", "")
+            self.form_email = recipient
         elif ct == "webhook":
             self.form_custom_url = config.get("url", "")
         self.form_on_failure = "run_failure" in events

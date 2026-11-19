@@ -383,8 +383,7 @@ class AuthState(rx.State):
                 if result is not None:
                     user = result["user"]
                     user_id = user.id
-                    user_email = user.email
-                    user_name = user.full_name
+                    user_email, user_name = svc.account_address(session, user)
                     access_token = result["access_token"]
                     refresh_token = result["refresh_token"]
                     orgs = [
@@ -422,7 +421,7 @@ class AuthState(rx.State):
         # Apply auth state
         self.access_token = access_token
         self.refresh_token = refresh_token
-        self.current_user = UserInfo(id=user_id, email=user_email, full_name=user_name)
+        self.current_user = UserInfo(id=user_id, email=user_email or "", full_name=user_name or "")
         self.user_orgs = orgs
 
         auth = AuthService(settings.secret_key)
@@ -610,7 +609,7 @@ class AuthState(rx.State):
                     org_id = org.id
                     signup_role = "owner"
                 user_id = user.id
-                user_email = user.email
+                user_email, _name = svc.account_address(session, user)
                 session.commit()
 
             # Confirm the address. Until this call existed, ``email_verified``
@@ -632,10 +631,12 @@ class AuthState(rx.State):
                     return
                 self.access_token = result["access_token"]
                 self.refresh_token = result["refresh_token"]
+                signed_in = result["user"]
+                email, full_name = svc.account_address(session, signed_in)
                 self.current_user = UserInfo(
-                    id=result["user"].id,
-                    email=result["user"].email,
-                    full_name=result["user"].full_name,
+                    id=signed_in.id,
+                    email=email or "",
+                    full_name=full_name or "",
                 )
                 self.current_org = OrgInfo(id=org_id, name=org_name, slug=org_slug)
                 self.user_orgs = [self.current_org]
@@ -796,7 +797,8 @@ class AuthState(rx.State):
                 self.auth_error = "User not found"
                 return rx.redirect("/login")
 
-            self.current_user = UserInfo(id=user.id, email=user.email, full_name=user.full_name)
+            email, full_name = UserService.account_address(session, user)
+            self.current_user = UserInfo(id=user.id, email=email or "", full_name=full_name or "")
             orgs = svc.get_user_orgs(session, user_id)
             self.user_orgs = [OrgInfo(id=o.id, name=o.name, slug=o.slug) for o in orgs]
             for o in self.user_orgs:

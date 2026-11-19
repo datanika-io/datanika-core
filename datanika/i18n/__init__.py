@@ -6,6 +6,20 @@ from pathlib import Path
 SUPPORTED_LOCALES = ["en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr"]
 DEFAULT_LOCALE = "en"
 
+# Each language in that language. A translated label would be English until the
+# visitor had already found the control (core#696 AC5).
+LOCALE_NAMES = {
+    "en": "English",
+    "ru": "Русский",
+    "el": "Ελληνικά",
+    "de": "Deutsch",
+    "fr": "Français",
+    "es": "Español",
+    "zh": "中文",
+    "ar": "العربية",
+    "sr": "Српски",
+}
+
 _cache: dict[str, dict[str, str]] = {}
 _dir = Path(__file__).parent
 

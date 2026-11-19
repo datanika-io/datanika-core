@@ -4,7 +4,7 @@ import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from datanika.errors import UserFacingError
@@ -55,44 +55,25 @@ class InvitationService:
         * ``get_user_by_email`` filters ``users.deleted_at IS NULL``. That is
           right for **login** and is not this question, so it is not borrowed
           here.
-        * At **N+1** the lookup becomes a ``user_pii`` join only, and a user
-          created during the release-N dual-write window has ``users.email`` set
-          with no sidecar row (``SPEC_PII_SEPARATION.md`` §8a.4 Kind 3). Hence
-          the ``or_`` below, which matches the chokepoint's own predicate.
-
-        ⚠️ **The legacy clause below and the one in
-        ``UserService.get_user_by_email`` are retired together at N+1.** They are
-        deliberately not shared: a single definition would mean the mutation that
-        arms this guard's regression test also disarms the guard, so the defect
-        would become untestable.
-
-        🔴 **CORRECTED 2026-09-07.** This said
-        ``test_refuses_when_the_identity_lookup_returns_none`` *"goes red if one is
-        deleted without the other"*. **Measured by mutation: only one direction was
-        true.** Deleting the *legacy* clause reds it; breaking the *sidecar* clause
-        left it **GREEN**, because that test's fixture sets ``users.email`` and the
-        legacy half answers it. The sidecar clause — the one that must carry this
-        guard alone after N+1 — was covered by nothing.
-        ``test_refuses_a_member_whose_address_lives_only_in_the_sidecar`` covers it
-        now, and the two tests red on opposite halves. A docstring that names one
-        test for both halves is how the untested half stays untested.
+        The address is read from ``user_pii`` only. ``users.email`` stopped being
+        written in N+1, so a legacy-column match would answer a column the product
+        no longer treats as the account address.
 
         ⚠️ **Do not make this fail closed.** Refusing addresses we cannot resolve
         refuses every invitation to a new user, which is the feature. The failure
         direction was never the defect.
+        ``test_refuses_a_member_whose_address_lives_only_in_the_sidecar`` is the
+        witness that this join, and not ``users.email``, answers the guard.
         """
         return (
             session.execute(
                 select(Membership.id)
                 .join(User, User.id == Membership.user_id)
-                .outerjoin(UserPII, UserPII.user_id == User.id)
+                .join(UserPII, UserPII.user_id == User.id)
                 .where(
                     Membership.org_id == org_id,
                     Membership.deleted_at.is_(None),
-                    or_(
-                        func.lower(UserPII.email) == email,
-                        func.lower(User.email) == email,  # legacy half — removed in N+1
-                    ),
+                    func.lower(UserPII.email) == email,
                 )
                 .limit(1)
             ).first()
@@ -147,14 +128,14 @@ class InvitationService:
             email=email,
             role=role,
             invited_by_user_id=invited_by_user_id,
-            # Dual-write, release N. `token` is still written because the previously
-            # deployed code looks invitations up by equality on it and the column is NOT
-            # NULL until this release's migration widens it; it is dropped in N+2.
-            token=token,
+            # `email` stays until N+2 drops the column. The plaintext token does not:
+            # the mailed value is an unmapped attribute so assigning it cannot flush
+            # back into `invitations.token`.
             token_hash=hash_invitation_token(token),
             status=InvitationStatus.PENDING,
             expires_at=datetime.now(UTC) + timedelta(days=expires_days),
         )
+        invitation.plaintext_token = token
         session.add(invitation)
         session.flush()
         session.add(InvitationPII(invitation_id=invitation.id, email=email))
@@ -198,12 +179,12 @@ class InvitationService:
             )
             return None
 
-        # Find the user by email. Read the invitee's address from the sidecar, falling
-        # back to the legacy column for rows the t1 window created (removed in N+1).
+        # The invitee's address is the sidecar. `invitations.email` stays populated
+        # until N+2 and is not a fallback here.
         from datanika.services.user_service import UserService as _UserService
 
         pii = session.get(InvitationPII, invitation.id)
-        invited_email = pii.email if pii is not None else invitation.email
+        invited_email = pii.email if pii is not None else None
         if not invited_email:
             return None
         user = _UserService(self._auth).get_user_by_email(session, invited_email)
@@ -254,17 +235,8 @@ class InvitationService:
     def get_invitation_by_token(self, session: Session, token: str) -> Invitation | None:
         """Look up an invitation by the value in the emailed link.
 
-        Matched on the **hash** (D3). The legacy plaintext clause is the t1 window, not a
-        convenience: at the blue/green swap the previously deployed code is still creating
-        invitations, and those rows carry a ``token`` and no ``token_hash``. Rows that
-        predate this release were hashed by the migration's backfill, so they match the
-        first clause. The legacy clause is deleted in **N+1**.
+        Matched on the **hash** (D3). The plaintext column is not a lookup key.
         """
         return session.execute(
-            select(Invitation).where(
-                or_(
-                    Invitation.token_hash == hash_invitation_token(token),
-                    Invitation.token == token,  # legacy — removed in N+1
-                )
-            )
+            select(Invitation).where(Invitation.token_hash == hash_invitation_token(token))
         ).scalar_one_or_none()

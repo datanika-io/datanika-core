@@ -3,7 +3,9 @@
 ``SPEC_RUN_CANCELLATION`` §7 **2a** — *"Read `is_cancelled` immediately before invoking the engine.
 Covers `pending → cancelled` and the window between dequeue and first byte."* ⚠️ **This is 2a, not
 2b.** A run already inside ``pipeline.run()`` or ``dbtRunner().invoke()`` is not stopped by
-anything here; both are single opaque calls, and §6 rules revocation out.
+anything here. The between-chunk stop, which leaves ``0 < rows < total``, is
+``tests/test_tasks/test_midflight_cancel_checkpoint.py``. One dbt invoke still finishes, and
+§6 still rules revocation out.
 
 The witness is §7.2's own discriminator: **a pre-flight stop leaves the destination with NOTHING**.
 So the upload arm loads a real CSV into a real DuckDB file and reads the destination back — never

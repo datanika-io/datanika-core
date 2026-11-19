@@ -27,7 +27,7 @@ A `schedules` row has one `target_type`, one `target_id`, and one `cron_expressi
 
 `get_downstream` is defined on `DependencyService` and called from `tests/test_services/test_dependency_service.py` only. `api_v1_routes.py` has no dependency route. Edges are added and removed on the DAG page (`datanika/ui/pages/dag.py`).
 
-`NON_TERMINAL_RUN_STATUSES` is `pending`, `running`, and `cancelling`. `TERMINAL_RUN_STATUSES` is `success`, `failed`, and `cancelled`. `datanika/services/agent_docs.py` tells a caller that cancel stops a run only when its work has not started, and that a run already working continues to its end.
+`NON_TERMINAL_RUN_STATUSES` is `pending`, `running`, and `cancelling`. `TERMINAL_RUN_STATUSES` is `success`, `failed`, and `cancelled`. `datanika/services/agent_docs.py` tells a caller that cancel stops further loading: a run that has not started stops before anything is read or written, rows already written stay, a model already running finishes, and later loads do not start.
 
 ---
 
@@ -91,7 +91,7 @@ A cron run that exhausts the current wait (60 seconds, five retries) fails. The 
 
 The in-run wait stays 60 seconds and five retries. This spec does not lengthen it. Work starts only after `check_upstream_dependencies` is satisfied. A wait that expires fails the run.
 
-A run that is already working is left to finish. Cancel stays what `agent_docs.py` already says: it stops a run whose work has not started, and a run already working reads `cancelling` and runs to its end. Upstream success does not cancel that run, restart it, or replace it.
+A run that is already working is left to finish by an upstream success. Cancel stops further loading, as `agent_docs.py` says: a run whose work has not started stops before anything is read or written, rows already written stay, and a model already running finishes. Upstream success does not cancel that run, restart it, or replace it.
 
 A manual success, an API success, and a cron success of the upstream all follow this rule. The nodes are uploads, transformations, and pipelines.
 

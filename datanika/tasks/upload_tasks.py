@@ -251,6 +251,7 @@ def run_upload(
                 destination_config=dst_config,
                 source_type=src_conn.connection_type.value,
                 destination_type=dst_conn.connection_type.value,
+                cancel_check=lambda: execution_service.is_cancelled_now(session, org_id, run_id),
             )
             rows = stats.rows
             bytes_processed = stats.bytes_out
@@ -360,6 +361,9 @@ def run_upload(
                     dlt_config=dlt_config,
                     dataset_name=dataset_name,
                     run_id=run_id,
+                    cancel_check=lambda: execution_service.is_cancelled_now(
+                        session, org_id, run_id
+                    ),
                 )
                 rows = result["rows_loaded"]
                 logs = str(result["load_info"])
@@ -525,10 +529,10 @@ def run_upload(
         # succeeded — without them the feature is alive but says nothing.
         #
         # core#657 AC4 — `status` is deliberately NOT passed. `announce_completion`
-        # reads it from the run. It used to be the literal "success", and a run the
-        # user CANCELLED still reaches this line, because nothing worker-side stops
-        # it. cloud's `_is_billable` gate is correct and rejects "cancelled" — it was
-        # simply handed a falsehood, and the user was billed for a run they stopped.
+        # reads it from the run. A cancelled load still reaches this line after the
+        # worker stops further loading and settles the run as cancelled. Passing the
+        # literal "success" billed a run the user stopped. cloud's `_is_billable`
+        # rejects "cancelled".
         execution_service.announce_completion(
             session,
             org_id,

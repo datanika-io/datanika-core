@@ -4,13 +4,12 @@ When this was written ``POST /api/v1/runs/{id}/cancel`` marked a run cancelled a
 and core's own served documents nonetheless told agents to "cancel stuck runs" and to "Cancel +
 retry" — so an agent following them left the first run going and started a second beside it.
 
-🔴 **Repointed 2026-09-22 (core#657), not deleted.** The documents said *"marks the run cancelled
-but does not stop it"*, and two things have since changed underneath that sentence: the pre-flight
-checkpoint (§7 2a) now stops a run whose work has not started, and a run that IS working reads
-``cancelling`` until its worker finishes. #1354's AC3 asked for exactly this — *"when the real stop
-ships, both documents are re-read against it"*. What has NOT changed is the reason for the advice:
-the run an agent calls stuck is one already working, and nothing interrupts that one. So the ban on
-the old remedy stands, and the sentence each test requires is the 2a one.
+The 2026-09-22 text said a working run reads ``cancelling`` and runs to its end. The
+between-chunk stop (2026-11-19) makes that sentence false for a load. Both documents now say
+what the stop does: further loading stops, rows already written stay, a model already running
+finishes, and an append re-run duplicates those partial rows. The ban on "Cancel + retry" and
+"cancel stuck" stays, because deleting the old remedy without naming the partial rows would
+tell an agent nothing about the rows already written.
 
 Each test asserts the replacement sentence is PRESENT as well as the old advice absent, in one
 test: a deleted line would satisfy the ban on its own, and tell an agent nothing.
@@ -31,13 +30,18 @@ def client():
 
 
 class TestTheAgentGuide:
-    def test_says_a_working_run_is_not_interrupted_and_does_not_advise_a_retry(self, client):
+    def test_says_further_loading_stops_and_an_append_retry_keeps_the_partial_rows(self, client):
         text = client.get("/api/v1/agent-guide.md").text
 
         assert "Cancel + retry" not in text
-        assert "stops a run only if its work has not started yet" in text
-        assert "reads `cancelling` and runs to its end" in text
+        assert "cancel stuck" not in text
+        assert "stops further loading" in text
+        assert "has not started its work yet" in text
+        assert "A model already running finishes" in text
+        assert "duplicates those partial rows" in text
+        assert "retrying an append does not clear the rows already written" in text
         assert "`GET /runs/{id}`" in text
+        assert "runs to its end" not in text
 
     def test_the_wait_outcomes_name_every_status_they_can_carry(self, client):
         """`408` read *"still `pending`/`running`"* — a hand-written status list that went stale
@@ -59,4 +63,6 @@ class TestTheAgentTiersPayload:
 
         assert "cancel stuck" not in text
         assert "Cancel runs," not in text
-        assert "Cancel runs whose work has not started (a run already working is not" in text
+        assert "Stop further loading: rows already written stay" in text
+        assert "append re-run duplicates the partial rows" in text
+        assert "Do not cancel and then retry an append" in text

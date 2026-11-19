@@ -6,6 +6,7 @@ from pathlib import Path
 
 from datanika.i18n import (
     DEFAULT_LOCALE,
+    LOCALE_NAMES,
     SUPPORTED_LOCALES,
     _cache,
     _dir,
@@ -24,6 +25,13 @@ class TestI18nConfig:
     def test_supported_locales_contains_expected(self):
         for locale in ["en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr"]:
             assert locale in SUPPORTED_LOCALES
+
+    def test_each_locale_is_named_in_that_language(self):
+        assert set(LOCALE_NAMES) == set(SUPPORTED_LOCALES)
+        assert len(set(LOCALE_NAMES.values())) == len(LOCALE_NAMES)
+        assert LOCALE_NAMES["de"] == "Deutsch"
+        assert LOCALE_NAMES["es"] == "Español"
+        assert LOCALE_NAMES["sr"] == "Српски"
 
 
 class TestLoadAll:

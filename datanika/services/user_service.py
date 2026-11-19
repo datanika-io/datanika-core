@@ -77,9 +77,7 @@ class UserService:
             raise UserServiceError("Email already exists")
 
         user = User(
-            email=email,
             password_hash=self._auth.hash_password(password),
-            full_name=full_name,
             # A human chose this password, so the account is a password account
             # from now on. ``find_or_create_oauth_user`` deliberately leaves the
             # column NULL, which is what makes it a reliable discriminator.
@@ -87,8 +85,6 @@ class UserService:
         )
         session.add(user)
         session.flush()
-        # Dual-write, release N. The legacy columns above are still written because the
-        # previously deployed code reads them, and they are dropped in N+2.
         session.add(UserPII(user_id=user.id, email=email, full_name=full_name))
         session.flush()
         return user
@@ -159,26 +155,20 @@ class UserService:
         **structurally** impossible rather than policy-impossible. Belt and braces —
         erasure also sets ``is_active = False``.
 
-        ⚠️ **The legacy ``users.email`` clause is not a fallback for old data, it is the
-        t1 window.** Release N dual-writes; under blue/green the *previously deployed*
-        container is still serving and still registering people while this code runs, and
-        it writes ``users.email`` with no ``user_pii`` row. A join-only read would leave
-        every account created during the swap unable to sign in. The clause is deleted in
-        **N+1**, when nothing writes the legacy column any more.
+        The address lives on ``user_pii``. ``users.email`` is no longer a lookup
+        key: release N+1 stopped writing it, and a join-only read is what makes a
+        sidecar-less row unable to sign in.
 
         ``scalar_one_or_none`` is kept deliberately over ``.first()``: two rows here would
-        mean the two columns had diverged for different people, and an arbitrary pick on a
+        mean two sidecars carried the same address, and an arbitrary pick on a
         login lookup is a worse outcome than a loud failure.
         """
         email = email.strip().lower()
         stmt = (
             select(User)
-            .outerjoin(UserPII, UserPII.user_id == User.id)
+            .join(UserPII, UserPII.user_id == User.id)
             .where(
-                or_(
-                    func.lower(UserPII.email) == email,
-                    func.lower(User.email) == email,  # legacy half — removed in N+1
-                ),
+                func.lower(UserPII.email) == email,
                 User.deleted_at.is_(None),
             )
         )
@@ -190,25 +180,26 @@ class UserService:
         return session.get(UserPII, user_id)
 
     @staticmethod
-    def _sync_user_pii(session: Session, user: User) -> UserPII:
-        """Mirror the legacy columns onto the sidecar during the dual-write window.
+    def account_address(session: Session, user: User) -> tuple[str | None, str | None]:
+        """The address and name the product shows and mails.
 
-        Creates the row when it is missing rather than assuming it exists: at t1 the
-        previously deployed code is still registering people, and those accounts arrive
-        with legacy columns and no sidecar. Deleted in **N+1**, when the legacy columns
-        stop being written and this becomes a one-way copy of nothing.
+        The sidecar wins, so a confirmed email change is the live address even
+        while ``users.email`` still holds the previous one. A missing sidecar
+        value falls back to the legacy column. This read does not write either.
         """
+
+        def _text(value: object) -> str | None:
+            # Only a stored string is an address. A missing sidecar falls through.
+            return value if isinstance(value, str) and value else None
+
         pii = session.get(UserPII, user.id)
-        if pii is None:
-            pii = UserPII(user_id=user.id, email=user.email, full_name=user.full_name)
-            session.add(pii)
-        if user.email is not None:
-            pii.email = user.email
-        if user.full_name is not None:
-            pii.full_name = user.full_name
-        pii.oauth_provider_id = user.oauth_provider_id
-        session.flush()
-        return pii
+        email = _text(pii.email) if pii is not None else None
+        full_name = _text(pii.full_name) if pii is not None else None
+        if email is None:
+            email = _text(user.email)
+        if full_name is None:
+            full_name = _text(user.full_name)
+        return email, full_name
 
     def get_user(self, session: Session, user_id: int) -> User | None:
         stmt = select(User).where(User.id == user_id)
@@ -716,18 +707,14 @@ class UserService:
         if oauth_provider_id:
             # `oauth_provider` stays on `users` — "google" is not personal data. Only the
             # subject moves, and for SAML/OIDC SSO that subject IS the address verbatim
-            # (`sso_routes.py` passes `oauth_provider_id=email`), which is why. Dual-read
-            # for the t1 window, exactly as in `get_user_by_email`; the legacy half goes
-            # in N+1.
+            # (`sso_routes.py` passes `oauth_provider_id=email`), which is why it lives
+            # on `user_pii`.
             stmt = (
                 select(User)
-                .outerjoin(UserPII, UserPII.user_id == User.id)
+                .join(UserPII, UserPII.user_id == User.id)
                 .where(
                     User.oauth_provider == oauth_provider,
-                    or_(
-                        UserPII.oauth_provider_id == oauth_provider_id,
-                        User.oauth_provider_id == oauth_provider_id,  # legacy — gone in N+1
-                    ),
+                    UserPII.oauth_provider_id == oauth_provider_id,
                     User.deleted_at.is_(None),
                 )
             )
@@ -744,13 +731,21 @@ class UserService:
 
         user = self.get_user_by_email(session, email)
         if user is not None:
+            pii = session.get(UserPII, user.id)
+            if pii is None:
+                # The verified address is the provider's claim, not users.email.
+                pii = UserPII(
+                    user_id=user.id,
+                    email=email,
+                    full_name=full_name or email.split("@")[0],
+                )
+                session.add(pii)
             if user.oauth_provider == oauth_provider:
-                stored_id = (user.oauth_provider_id or "").strip()
+                stored_id = (pii.oauth_provider_id or "").strip()
                 if not stored_id:
                     # Linked before the subject was recorded — bind it now
                     # rather than locking a legitimate user out.
-                    user.oauth_provider_id = oauth_provider_id
-                    self._sync_user_pii(session, user)
+                    pii.oauth_provider_id = oauth_provider_id or None
                     session.flush()
                 elif stored_id != oauth_provider_id:
                     raise UserServiceError(
@@ -760,22 +755,19 @@ class UserService:
             elif not user.oauth_provider:
                 self._assert_local_account_proved_its_email(user)
                 user.oauth_provider = oauth_provider
-                user.oauth_provider_id = oauth_provider_id
-                self._sync_user_pii(session, user)
+                pii.oauth_provider_id = oauth_provider_id or None
                 session.flush()
             return user, False
 
         # Create new user with random password (OAuth users don't need one)
         random_hash = self._auth.hash_password(secrets.token_urlsafe(32))
+        display_name = full_name or email.split("@")[0]
         user = User(
-            email=email,
             password_hash=random_hash,
-            full_name=full_name or email.split("@")[0],
             # Safe because the gate above refused anything unverified. This
             # comment used to assert it; now the code enforces it.
             email_verified=True,
             oauth_provider=oauth_provider,
-            oauth_provider_id=oauth_provider_id,
         )
         session.add(user)
         session.flush()
@@ -783,7 +775,7 @@ class UserService:
             UserPII(
                 user_id=user.id,
                 email=email,
-                full_name=user.full_name,
+                full_name=display_name,
                 oauth_provider_id=oauth_provider_id or None,
             )
         )
@@ -1171,11 +1163,11 @@ class UserService:
             counts["user_pii"] = 1
 
         # ── step 1a (§0.2) ─────────────────────────────────────────────────────
-        # NULL the legacy columns this release still dual-writes. Without this, every
-        # erasure until N+2 deletes the copy and leaves the original — while criterion 8,
-        # `get_user_by_email`, login and every UI surface still read as erased, so nothing
-        # short of a raw query over the legacy columns can see the failure. Possible only
-        # because release N drops these NOT NULLs.
+        # NULL the legacy columns. N+1 stopped writing them; N+2 drops them. A row
+        # created before N+1 still holds the address here. Without this, erasure
+        # deletes the sidecar and leaves the original, and nothing short of a raw
+        # query over the legacy columns can see the failure. Possible only because
+        # release N drops these NOT NULLs.
         # 🚨 DELETE THIS BLOCK IN N+2, when the columns go.
         user.email = None
         user.full_name = None

@@ -70,7 +70,7 @@ class TestRequestDoesNotMoveTheLiveAddress:
         db_session.flush()
         db_session.refresh(user)
         assert prepared.status == READY
-        assert user.email == "alice@example.com"
+        assert user.email is None
         assert _pii(db_session, user.id).email == "alice@example.com"
         assert _pii(db_session, user.id).pending_email == "new@example.com"
 
@@ -93,7 +93,7 @@ class TestRequestDoesNotMoveTheLiveAddress:
         assert svc.validate_token(db_session, prepared.token) is not None
         assert svc.validate_token(db_session, prepared.token) is not None
         assert _row(db_session, prepared.token).used_at is None
-        assert user.email == "alice@example.com"
+        assert user.email is None
 
 
 class TestConfirmationAppliesTheAddress:
@@ -104,7 +104,7 @@ class TestConfirmationAppliesTheAddress:
         db_session.refresh(user)
         assert confirmed is not None
         assert confirmed.id == user.id
-        assert user.email == "new@example.com"
+        assert user.email is None
         assert _pii(db_session, user.id).email == "new@example.com"
         assert _pii(db_session, user.id).pending_email is None
         assert user.email_verified is True
@@ -114,7 +114,8 @@ class TestConfirmationAppliesTheAddress:
         assert svc.confirm_change(db_session, prepared.token) is not None
         assert svc.confirm_change(db_session, prepared.token) is None
         db_session.refresh(user)
-        assert user.email == "new@example.com"
+        assert user.email is None
+        assert _pii(db_session, user.id).email == "new@example.com"
 
     def test_an_expired_link_fails(self, db_session, svc, user):
         prepared = svc.prepare_change(db_session, user.id, "new@example.com")
@@ -123,7 +124,7 @@ class TestConfirmationAppliesTheAddress:
         db_session.flush()
         assert svc.confirm_change(db_session, prepared.token) is None
         db_session.refresh(user)
-        assert user.email == "alice@example.com"
+        assert user.email is None
         assert _pii(db_session, user.id).pending_email == "new@example.com"
 
 
@@ -134,7 +135,7 @@ class TestATakenAddressIsRefused:
         prepared = svc.prepare_change(db_session, user.id, "bob@example.com")
         assert prepared.status == ADDRESS_TAKEN
         assert prepared.token is None
-        assert user.email == "alice@example.com"
+        assert user.email is None
         assert _pii(db_session, user.id).pending_email is None
 
     def test_another_pending_address_is_refused(self, db_session, svc, user, user_svc):
@@ -156,7 +157,7 @@ class TestCancel:
         prepared = svc.prepare_change(db_session, user.id, "new@example.com")
         assert svc.cancel_change(db_session, user.id) is True
         db_session.refresh(user)
-        assert user.email == "alice@example.com"
+        assert user.email is None
         assert _pii(db_session, user.id).pending_email is None
         assert _row(db_session, prepared.token).used_at is not None
         assert svc.confirm_change(db_session, prepared.token) is None

@@ -62,13 +62,26 @@ from pathlib import Path
 
 import pytest
 
+from datanika.i18n import get_translations
+from datanika.ui.state.i18n_state import I18nState
+
 ROOT = Path(__file__).resolve().parents[2]
 APP_MODULE = ROOT / "datanika" / "datanika.py"
 PAGES_DIR = ROOT / "datanika" / "ui" / "pages"
 PACKAGE = ROOT / "datanika"
 
-#: Calling either of these puts the sidebar, and therefore the switcher, on screen.
+#: Calling either of these puts a locale control on screen. ``page_layout(`` is
+#: the authenticated shell; the pre-auth contract uses ``language_switcher(``
+#: and must not reach the shell.
 LOCALE_CONTROL_CALLS = ("page_layout(", "language_switcher(")
+
+#: core#696 AC1. The other translated routes this file still flags are not this
+#: contract. Accept-Language (AC4) is not this contract either.
+CONTRACT_ROUTES = ("/login", "/signup", "/forgot-password", "/reset-password")
+
+#: The sidebar of a page reached after login renders this key. Serbian differs
+#: from English, so a later page still on the default locale cannot pass.
+POST_LOGIN_KEY = "nav.connections"
 
 #: `_t = I18nState.translations` then `_t["your.key"]` — the documented idiom.
 TRANSLATION_LOOKUP = re.compile(r'_t\[\s*["\']([a-zA-Z0-9_.]+)["\']\s*\]')
@@ -157,6 +170,17 @@ def page_renders_translated_copy(source: str) -> bool:
     return bool(TRANSLATION_LOOKUP.search(source))
 
 
+def _page_source(route: str) -> str:
+    for registered, page_callable, _gated in _registered_pages():
+        if registered != route:
+            continue
+        module = _module_defining(page_callable)
+        if module is None:
+            break
+        return module.read_text(encoding="utf-8")
+    raise AssertionError(f"{route} is not a registered page with its own module")
+
+
 def unreachable_translated_surfaces() -> list[tuple[str, int]]:
     """``(route, distinct keys)`` for pages with translated copy and no control."""
     if app_reads_accept_language():
@@ -170,6 +194,30 @@ def unreachable_translated_surfaces() -> list[tuple[str, int]]:
         if page_renders_translated_copy(source) and not page_renders_a_locale_control(source):
             out.append((route, len(set(TRANSLATION_LOOKUP.findall(source)))))
     return out
+
+
+def _fresh_i18n() -> I18nState:
+    return I18nState(_reflex_internal_init=True)
+
+
+def _client_storage_values(state: I18nState) -> dict[str, str]:
+    """What a later page can receive: client storage only, not the state object.
+
+    ``update_vars_internal`` applies a frontend value only when
+    ``_is_client_storage`` says the field is one. A plain ``locale`` var is
+    absent here, which is the choice dying with the login page.
+    """
+    stored: dict[str, str] = {}
+    for name in state.base_vars:
+        if state._is_client_storage(name):
+            stored[name] = getattr(state, name)
+    return stored
+
+
+def _hydrate_client_storage(state: I18nState, stored: dict[str, str]) -> None:
+    for name, value in stored.items():
+        if state._is_client_storage(name):
+            setattr(state, name, value)
 
 
 class TestTheReachabilityGuardCanActuallyFail:
@@ -259,17 +307,80 @@ class TestTheReachabilityGuardCanActuallyFail:
         )
 
 
+class TestTheFourPreAuthPagesRenderTheSwitcher:
+    """AC1. The call is in the page module itself. An import of ``layout`` is
+    not this, and ``page_layout`` is the fix the spec forbids."""
+
+    @pytest.mark.parametrize("route", CONTRACT_ROUTES)
+    def test_the_page_calls_the_switcher_and_not_the_app_shell(self, route):
+        source = _page_source(route)
+        assert "language_switcher(" in source, (
+            f"{route} does not render language_switcher(). Importing the module "
+            "that defines it is not a render."
+        )
+        assert "page_layout(" not in source, (
+            f"{route} reaches the switcher by mounting page_layout, which drags "
+            "the sidebar and check_auth onto a signed-out page."
+        )
+
+    def test_the_control_names_each_language_in_that_language(self):
+        from datanika.ui.components.language_switcher import language_switcher
+
+        source = (ROOT / "datanika" / "ui" / "components" / "language_switcher.py").read_text(
+            encoding="utf-8"
+        )
+        rendered = str(language_switcher())
+        assert "Language..." not in source
+        assert "Language..." not in rendered
+        assert "LOCALE_NAMES[code]" in source
+        # The closed control and the list show the endonym. "Deutsch" is ASCII,
+        # so the compiled tree cannot hide it as an escape.
+        assert "Deutsch" in rendered
+        assert '"de"' not in rendered
+
+
+class TestALocaleChosenOnLoginRendersAfterLogin:
+    """AC2 and AC3. The second state is a new one. It receives only client
+    storage, then runs ``ensure_loaded`` — the call ``check_auth`` makes on a
+    page reached after login. The assertion is the sentence that page renders.
+    """
+
+    def test_serbian_chosen_on_the_login_page_is_still_rendered_after_login(self):
+        english = get_translations("en")[POST_LOGIN_KEY]
+        serbian = get_translations("sr")[POST_LOGIN_KEY]
+        assert serbian != english
+
+        login_page = _fresh_i18n()
+        login_page.set_locale("Српски")
+        stored = _client_storage_values(login_page)
+
+        after_login = _fresh_i18n()
+        _hydrate_client_storage(after_login, stored)
+        after_login.ensure_loaded()
+
+        rendered = after_login.translations[POST_LOGIN_KEY]
+        assert rendered == serbian, (
+            f"the page after login rendered {rendered!r}, not the Serbian "
+            f"{serbian!r}. The choice made on /login did not survive as copy."
+        )
+        assert rendered != english
+
+
 class TestTranslatedCopyIsReachableInEveryLocale:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "core#696: no Accept-Language reader exists and no ungated page mounts "
-            "the locale switcher, so 8 of 9 locales are undisplayable on the "
-            "pre-auth surface. Remove this marker with the fix."
+            "core#696 AC1 is the four pre-auth pages, and those are asserted "
+            "above without this marker. Other translated pages still render "
+            "copy with no locale control, and Accept-Language stays out. A "
+            "switcher on the four must not turn this finding into an "
+            "unexpected pass."
         ),
     )
     def test_no_page_renders_copy_its_viewer_cannot_choose_the_language_of(self):
-        offenders = unreachable_translated_surfaces()
+        offenders = [
+            item for item in unreachable_translated_surfaces() if item[0] not in CONTRACT_ROUTES
+        ]
         total = sum(count for _, count in offenders)
         assert not offenders, (
             "these routes render translated copy and give their viewer no way to "

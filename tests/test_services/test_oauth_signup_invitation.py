@@ -68,7 +68,7 @@ def _invite(db_session, auth, inviting_org, *, email=EMAIL) -> str:
         db_session, org.id, email, MemberRole.EDITOR, owner.id
     )
     db_session.flush()
-    return invitation.token
+    return invitation.plaintext_token
 
 
 async def _sign_in(oauth, db_session, *, email=EMAIL, sub="google-sub-nina", invite_token=""):
@@ -88,7 +88,10 @@ async def _sign_in(oauth, db_session, *, email=EMAIL, sub="google-sub-nina", inv
 
 
 def _memberships(db_session, email):
-    user = db_session.query(User).filter(User.email == email).one()
+    from datanika.models.pii import UserPII
+
+    pii = db_session.query(UserPII).filter(UserPII.email == email).one()
+    user = db_session.get(User, pii.user_id)
     memberships = (
         db_session.query(Membership)
         .filter(Membership.user_id == user.id, Membership.deleted_at.is_(None))

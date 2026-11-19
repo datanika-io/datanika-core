@@ -150,7 +150,10 @@ class TestAutoLinkRequiresBothSides:
         assert is_new is False
         assert linked.id == u.id
         assert linked.oauth_provider == "github"
-        assert linked.oauth_provider_id == "proven-subject"
+        from datanika.models.pii import UserPII
+
+        assert linked.oauth_provider_id is None
+        assert db_session.get(UserPII, linked.id).oauth_provider_id == "proven-subject"
 
     def test_an_account_with_no_password_of_its_own_still_links(self, user_svc, db_session, auth):
         """The second half of the condition, and it is not decoration.

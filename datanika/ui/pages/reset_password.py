@@ -19,6 +19,7 @@ off-site: while the token is still in the address bar it would ride out on the
 
 import reflex as rx
 
+from datanika.ui.components.language_switcher import language_switcher
 from datanika.ui.components.secure_input import autofill_attrs
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.password_reset_state import PasswordResetState
@@ -116,6 +117,7 @@ def _invalid() -> rx.Component:
 def reset_password_page() -> rx.Component:
     return rx.center(
         rx.vstack(
+            language_switcher(suppress_autofill=False),
             _brand(),
             rx.cond(
                 PasswordResetState.token_valid,

@@ -8,11 +8,10 @@ read it: the dialog's English strings equal it, the cancel response carries it, 
 OpenAPI operation describes it. The docs page is in the landing repository and carries the same
 text by hand; that is the one copy this file cannot see.
 
-🔑 **The wording describes 2a, not 2b — and that is the point of pinning it.** D3 as first
-written (*"Cancelling stops further loading … `append` will duplicate the partial rows"*) describes
-a mid-flight stop, which §7.2 declares unbuildable today: a run already inside its engine call
-runs to the end. Shipping D3 verbatim would tell the user the one thing about cancelling that is
-not true. The spec records the 2a wording as D3a, with the condition that flips it back.
+The wording is the stop that ships. A run that has not started still stops before any read or
+write. A load already inside dlt stops between chunks: further loading stops, rows already
+written stay, and an append re-run duplicates those partial rows. One dbt invoke still finishes.
+D3a in the spec keeps the earlier sentence; the 2026-11-19 note is the flip.
 
 ⚠️ **The billing sentence follows the edition.** The open-source edition bills nobody, so a
 self-hoster told *"you are billed for what was processed"* has been told something false. Only
@@ -84,16 +83,23 @@ class TestTheWordingDescribesWhatHappensToday:
             CANCEL_EFFECT
         )
 
-    def test_work_already_in_progress_is_said_to_run_to_the_end(self):
-        """🚦 The flip condition. When 2b ships — an engine call that a cancel can interrupt —
-        THIS is the assertion that must change, and the wording with it (spec D3a)."""
-        assert "cannot be interrupted" in CANCEL_EFFECT
-        assert "runs to the end" in CANCEL_EFFECT
+    def test_work_already_in_progress_stops_further_loading(self):
+        """Was ``test_work_already_in_progress_is_said_to_run_to_the_end`` (spec D3a).
+
+        That assertion described the pre-flight world. The between-chunk stop makes D3 true
+        for a load, and one dbt invoke still finishes. Deleting the old sentence without
+        naming the partial rows would hide the append cost.
+        """
+        assert "Cancelling stops further loading" in CANCEL_EFFECT
+        assert "append will duplicate the partial rows" in CANCEL_EFFECT
+        assert "A model already running finishes" in CANCEL_EFFECT
+        assert "cannot be interrupted" not in CANCEL_EFFECT
+        assert "runs to the end" not in CANCEL_EFFECT
 
     def test_the_data_stays_and_the_append_consequence_is_named(self):
         """D3: `append` is the one disposition where cancelling leaves the user a cleanup."""
         assert "stays there" in CANCEL_EFFECT
-        assert "appends" in CANCEL_EFFECT
+        assert "append will duplicate the partial rows" in CANCEL_EFFECT
 
     def test_the_billing_sentence_is_ac12s(self):
         assert "billed for what was processed before the run stopped" in CANCEL_BILLING

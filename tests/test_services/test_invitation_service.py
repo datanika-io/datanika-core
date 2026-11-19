@@ -62,7 +62,8 @@ class TestCreateInvitation:
         assert inv.email == "newuser@test.com"
         assert inv.role == MemberRole.EDITOR
         assert inv.status == InvitationStatus.PENDING
-        assert inv.token != ""
+        assert inv.token is None
+        assert inv.plaintext_token
         assert inv.org_id == org.id
         assert inv.invited_by_user_id == owner.id
 
@@ -87,13 +88,9 @@ class TestAlreadyMemberGuardDoesNotRestOnTheIdentityLookup:
     the guard was not answered ``no`` — it was **skipped**, and the invitation
     was created for somebody who is already a member.
 
-    ⚠️ **Not reachable in production today.** Release N dual-writes, so every
-    real user has ``users.email`` set and ``get_user_by_email``'s legacy ``or_``
-    half finds them even with no sidecar row. It becomes reachable at **N+1**,
-    which deletes that half — ``SPEC_PII_SEPARATION.md`` §8a.4 Kind 3. These
-    tests model N+1 rather than waiting for it, because §8a.6 requires N+1's
-    diff to be **only deletions** and a security fix arriving inside that diff
-    is exactly the pair somebody later has to tell apart.
+    N+1 reads the membership guard from ``user_pii`` only. The sidecar-only
+    member test below is the witness for that join. The soft-deleted row is the
+    witness that ``users.deleted_at`` is not what answers "already a member".
 
     🔑 ``test_already_member_rejected`` above used to expose this **by
     accident** — its fixture owner had no sidecar row. PR #1013 gave it one, so
@@ -102,53 +99,6 @@ class TestAlreadyMemberGuardDoesNotRestOnTheIdentityLookup:
     the defect's only witness while leaving the defect.* These tests build the
     state on purpose so that cannot happen again.
     """
-
-    @staticmethod
-    def _sidecar_less_member(session, org, email: str) -> User:
-        """A ``User`` with an active ``Membership`` and **no** ``user_pii`` row.
-
-        ⚠️ Deliberately **not** ``tests.factories.make_user``: that factory
-        exists to create the sidecar, and routing this through it is precisely
-        what would silently retire the assertion. This is the second site in the
-        repo that must build a sidecar-less user on purpose — the first is
-        ``test_pii_separation.py``'s §8a.4 Kind 1 fixture, which §8a.4 likewise
-        says never to "fix". **Do not helpfully convert either.**
-        """
-        user = User(email=email, full_name="Sidecarless", password_hash="hashed")
-        session.add(user)
-        session.flush()
-        if session.get(UserPII, user.id) is not None:
-            raise RuntimeError(
-                "precondition failed: this user has a user_pii row, so the state "
-                "core#1010 is about does not exist and nothing below is a measurement"
-            )
-        session.add(Membership(user_id=user.id, org_id=org.id, role=MemberRole.VIEWER))
-        session.flush()
-        return user
-
-    def test_refuses_when_the_identity_lookup_returns_none(
-        self, db_session, inv_svc, org, owner, monkeypatch
-    ):
-        """The criterion. An unresolvable address must not skip the guard.
-
-        ``get_user_by_email`` is patched to ``None`` because that is the issue's
-        condition stated exactly, and because it is what N+1 does to a
-        sidecar-less user once the join becomes the only half. Patching the
-        **collaborator** rather than editing its query also pins the invariant
-        that matters: ``create_invitation`` may not depend on that lookup
-        succeeding. A fix routed back through it fails here, correctly.
-
-        ⚠️ This test also fails if N+1 deletes ``InvitationService``'s *own*
-        legacy ``users.email`` clause. That is the intended coupling — it is a
-        behavioural reminder that the two sites must be retired together, which
-        is worth more than a comment asking nicely.
-        """
-        email = f"ghost-{uuid.uuid4().hex[:6]}@test.com"
-        self._sidecar_less_member(db_session, org, email)
-        monkeypatch.setattr(UserService, "get_user_by_email", lambda self, session, email: None)
-
-        with pytest.raises(ValueError, match="already a member"):
-            inv_svc.create_invitation(db_session, org.id, email, MemberRole.EDITOR, owner.id)
 
     def test_refuses_when_the_user_row_is_soft_deleted(self, db_session, inv_svc, org, owner):
         """``users.deleted_at IS NULL`` is a *login* filter, not a membership one.
@@ -310,7 +260,7 @@ class TestAcceptInvitation:
         )
         db_session.flush()
 
-        membership = inv_svc.accept_invitation(db_session, inv.token)
+        membership = inv_svc.accept_invitation(db_session, inv.plaintext_token)
         assert membership is not None
         assert membership.user_id == user.id
         assert membership.org_id == org.id
@@ -339,7 +289,8 @@ class TestAcceptInvitation:
         stranger = user_svc.register_user(db_session, "other@test.com", "other password", "Other")
         db_session.flush()
 
-        assert inv_svc.accept_invitation(db_session, inv.token, user_id=stranger.id) is None
+        refused = inv_svc.accept_invitation(db_session, inv.plaintext_token, user_id=stranger.id)
+        assert refused is None
         # Read the column, not ``db_session.refresh(inv)``: a refresh reloads ``expires_at`` from
         # SQLite without its timezone, and the control below would then fail on a naive/aware
         # comparison that PostgreSQL never produces (see test_invited_signup_lands_in_one_org).
@@ -355,7 +306,7 @@ class TestAcceptInvitation:
         )
 
         # Control: the account it was issued to can still accept it.
-        membership = inv_svc.accept_invitation(db_session, inv.token, user_id=invited.id)
+        membership = inv_svc.accept_invitation(db_session, inv.plaintext_token, user_id=invited.id)
         assert membership is not None
         assert membership.user_id == invited.id
 
@@ -366,8 +317,8 @@ class TestAcceptInvitation:
         user_svc.register_user(db_session, "twice@test.com", "twice password", "Twice")
         db_session.flush()
 
-        inv_svc.accept_invitation(db_session, inv.token)
-        result = inv_svc.accept_invitation(db_session, inv.token)
+        inv_svc.accept_invitation(db_session, inv.plaintext_token)
+        result = inv_svc.accept_invitation(db_session, inv.plaintext_token)
         assert result is None
 
 

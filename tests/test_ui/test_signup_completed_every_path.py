@@ -28,7 +28,7 @@ import pytest
 
 from datanika import hooks
 from datanika.config import settings
-from datanika.models.user import Organization, User
+from datanika.models.user import Organization
 from datanika.services import oauth_routes, signup_conversion, sso_routes
 from datanika.services.auth import AuthService
 from datanika.services.oauth_service import OAuthService, github_provider, google_provider
@@ -207,7 +207,9 @@ async def _sso_callback(db_session, org_slug: str, *, email: str) -> dict:
 
 
 def _user_id(db_session, email: str) -> int:
-    return db_session.query(User).filter(User.email == email).one().id
+    from datanika.models.pii import UserPII
+
+    return db_session.query(UserPII).filter(UserPII.email == email).one().user_id
 
 
 def _conversions(events) -> int:
@@ -285,6 +287,7 @@ def test_control_a_password_signup_still_emits(emitted):
     """
     user = SimpleNamespace(id=41, email="pat@example.com", full_name="Pat")
     fake_svc = MagicMock()
+    fake_svc.account_address.return_value = ("pat@example.com", "Pat")
     fake_svc.register_user.return_value = user
     fake_svc.create_org.return_value = SimpleNamespace(id=410, name="Pat's Org", slug="org-41")
     fake_svc.authenticate.return_value = {

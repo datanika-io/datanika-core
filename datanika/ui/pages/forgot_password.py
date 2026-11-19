@@ -133,7 +133,7 @@ def _unavailable() -> rx.Component:
 def forgot_password_page() -> rx.Component:
     return rx.center(
         rx.vstack(
-            language_switcher(),
+            language_switcher(suppress_autofill=False),
             _brand(),
             rx.cond(
                 PasswordResetState.submitted,

@@ -13,6 +13,8 @@ def searchable_select(
     search_placeholder: rx.Var[str] | str = "Search...",
     width: str = "100%",
     size: str = "2",
+    *,
+    suppress_autofill: bool = True,
 ) -> rx.Component:
     """A select component with a search/filter input.
 
@@ -95,11 +97,11 @@ def searchable_select(
                     size="2",
                     width="100%",
                     auto_focus=True,
-                    # This filter box sits inside forms that also carry password
-                    # inputs (the connection form is one), so it is eligible for
-                    # the same positional autofill that core#618 was about. It
-                    # is a transient filter, never a credential — opt it out.
-                    custom_attrs=no_autofill_attrs(),
+                    # Beside a connector secret this filter is eligible for the
+                    # positional fill core#618 was about, so the default opts it
+                    # out. The pre-auth pages pass False: no_autofill_attrs is
+                    # forbidden on those credential-pair forms (core#672).
+                    **({"custom_attrs": no_autofill_attrs()} if suppress_autofill else {}),
                 ),
                 rx.scroll_area(
                     rx.vstack(

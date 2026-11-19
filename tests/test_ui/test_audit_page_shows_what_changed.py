@@ -201,9 +201,9 @@ def test_the_ip_address_translations_went_with_the_column():
     recoverable with one `git show` — the nine strings are "IP Address" and its
     obvious translations, not prose anyone must re-derive.
 
-    **For whoever wires `client_ip.py` (core#670): re-add these keys with the
-    column.** A populated `ip_address` with no header is the same defect this
-    change removed, pointing the other way.
+    **The page cell stays absent (core#670).** The address is stored in
+    ``audit_log_pii`` and is not rendered. Re-adding ``audit.ip_address`` would
+    put an orphan key back, which is what this test forbids.
     """
     for locale in LOCALES:
         assert "audit.ip_address" not in _locale(locale), (

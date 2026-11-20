@@ -456,13 +456,21 @@ class TestOverLimitValidKeyIsShed:
         harness.clock.advance(2)
         assert harness.get("etf_good").status_code == 200
 
-    def test_one_keys_refusal_does_not_refuse_another(self, harness):
-        harness.api_key_svc.authenticate_api_key.return_value = _valid_key(key_id=1)
-        for _ in range(settings.api_rate_limit_burst + 1):
-            harness.get("etf_key_one")
+    def test_two_keys_of_one_org_share_the_refusal(self, harness):
+        """The account bucket is the organization, so a second key of that org
+        is refused with the first. A key of another org spends its own bucket.
+        Auth-failure shedding stays on the credential, not this bucket.
+        """
+        harness.api_key_svc.authenticate_api_key.return_value = _valid_key(key_id=1, org_id=10)
+        for _ in range(settings.api_rate_limit_burst):
+            assert harness.get("etf_key_one").status_code == 200
+        assert harness.get("etf_key_one").status_code == 429
 
-        harness.api_key_svc.authenticate_api_key.return_value = _valid_key(key_id=2)
-        assert harness.get("etf_key_two").status_code == 200
+        harness.api_key_svc.authenticate_api_key.return_value = _valid_key(key_id=2, org_id=10)
+        assert harness.get("etf_key_two").status_code == 429
+
+        harness.api_key_svc.authenticate_api_key.return_value = _valid_key(key_id=3, org_id=11)
+        assert harness.get("etf_key_other_org").status_code == 200
 
 
 # ---------------------------------------------------------------------------

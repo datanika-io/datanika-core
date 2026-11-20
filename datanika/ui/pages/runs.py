@@ -179,7 +179,12 @@ def runs_table() -> rx.Component:
                 RunState.runs,
                 lambda r: rx.table.row(
                     rx.table.cell(r.id),
-                    rx.table.cell(rx.text(r.target_name)),
+                    rx.table.cell(
+                        rx.text(
+                            r.target_name,
+                            custom_attrs={"data-caused-by": r.caused_by_run_id},
+                        ),
+                    ),
                     rx.table.cell(_status_badge(r)),
                     rx.table.cell(r.started_at),
                     rx.table.cell(r.finished_at),

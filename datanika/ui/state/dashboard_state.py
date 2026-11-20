@@ -263,6 +263,9 @@ class DashboardState(BaseState):
                         trans_names,
                         pipeline_names,
                     ),
+                    caused_by_run_id=(
+                        str(r.caused_by_run_id) if r.caused_by_run_id is not None else ""
+                    ),
                     status=r.status.value,
                     started_at=str(r.started_at) if r.started_at else "",
                     finished_at=str(r.finished_at) if r.finished_at else "",

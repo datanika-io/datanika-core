@@ -5,6 +5,7 @@ the run that says why (`SPEC_EARNED_VERDICTS` §4.6). The runs page had no way t
 run: every link into it went to the unfiltered list.
 """
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,7 @@ import datanika.ui.state.run_state as run_state_module
 from datanika.models.dependency import NodeType
 from datanika.models.user import Organization
 from datanika.services.execution_service import ExecutionService
+from datanika.ui.pages import runs as runs_page
 from datanika.ui.state.run_state import RunState
 from tests.test_ui.test_models_empty_state_after_a_load import _session_patch
 
@@ -87,3 +89,33 @@ async def test_control_nothing_is_opened_without_a_run_this_org_has(
 
     assert st.selected_run_id == 0
     assert st.selected_run_logs == ""
+
+
+@pytest.mark.asyncio
+async def test_load_runs_keeps_the_upstream_cause(db_session, org_with_runs):
+    """A downstream row remembers the upload run that started it.
+
+    ``/runs`` lists the row either way. ``caused_by_run_id`` is the column that
+    says which upload it was, and an empty value is a run that merely exists.
+    """
+    org, (upload_run, _second) = org_with_runs
+    caused = ExecutionService().create_run(
+        db_session,
+        org.id,
+        NodeType.TRANSFORMATION,
+        7,
+        caused_by_run_id=upload_run.id,
+    )
+    db_session.flush()
+
+    st = await _load(db_session, org.id, {})
+
+    row = next(item for item in st.runs if item.id == caused.id)
+    assert row.caused_by_run_id == str(upload_run.id)
+    upload = next(item for item in st.runs if item.id == upload_run.id)
+    assert upload.caused_by_run_id == ""
+
+
+def test_the_runs_table_exposes_that_cause_on_the_target():
+    source = inspect.getsource(runs_page.runs_table)
+    assert '"data-caused-by": r.caused_by_run_id' in source

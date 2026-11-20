@@ -442,3 +442,4 @@ class TestRunItem:
         # nobody counted.
         assert item.rows_loaded == ""
         assert item.error_message == ""
+        assert item.caused_by_run_id == ""

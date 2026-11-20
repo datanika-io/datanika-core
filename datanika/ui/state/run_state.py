@@ -67,6 +67,10 @@ class RunItem(BaseModel):
     target_type: str = ""
     target_id: int = 0
     target_name: str = ""
+    #: The upstream run that started this one, as text. Empty when a member or a
+    #: schedule created the run. ``/runs`` has no cause column; the page puts this
+    #: on the target so a reader can tell those two apart.
+    caused_by_run_id: str = ""
     status: str = ""
     started_at: str = ""
     finished_at: str = ""
@@ -145,6 +149,9 @@ class RunState(BaseState):
                         upload_names,
                         trans_names,
                         pipeline_names,
+                    ),
+                    caused_by_run_id=(
+                        str(r.caused_by_run_id) if r.caused_by_run_id is not None else ""
                     ),
                     status=r.status.value,
                     started_at=str(r.started_at) if r.started_at else "",

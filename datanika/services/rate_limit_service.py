@@ -61,7 +61,7 @@ class RateLimitResult:
 class RateLimitService:
     """Fixed-window rate limiter backed by Redis.
 
-    Uses per-key counters with TTL for minute-level and second-level windows.
+    Uses named-bucket counters with TTL for minute-level and second-level windows.
 
     ⚠️ **Fixed, not sliding** — the window key is ``floor(now / window)``, a
     wall-clock partition, so identical traffic flips verdict depending only on
@@ -127,10 +127,11 @@ class RateLimitService:
 
         ``bucket`` names the subject being limited. It used to be an
         ``api_key_id: int``, which was the only thing this method ever did with
-        it — password reset (core#623) needs the same sliding window keyed on an
+        it — password reset (core#623) needs the same window keyed on an
         email digest or a client IP, so the parameter became a string rather
-        than a second limiter growing up beside this one. API-key callers pass
-        ``f"{api_key.id}"``, which produces byte-identical Redis keys.
+        than a second limiter growing up beside this one. The API allowance
+        passes ``f"org:{org_id}"``, one bucket per account. Auth-failure
+        shedding uses :meth:`credential_bucket` and does not share it.
         """
         return self.check_window(bucket, limit_rpm, window_seconds=60, burst_per_sec=burst_per_sec)
 

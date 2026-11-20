@@ -6,12 +6,9 @@ verified the absence three ways: the cloud `Plan` has no `max_api_keys`,
 hooks at all — so there is no seam a quota could attach to even if one were
 written.** This file is that seam.
 
-Why it matters more than a missing column: `api_middleware` resolves
-`rate_limit_rpm` per **org** and buckets per **key**, so the published per-plan
-rate bounds nothing while key creation is unbounded. A Free org with ten keys
-sustains 300 rpm — exactly what Enterprise is sold
-(`plans/qa/notes/probe-705/`, finding 4). A per-key bucket cannot enforce a
-per-plan entitlement; only a cap on keys can.
+The allowance is one bucket per account, so ten keys do not multiply the
+plan rate. This seam is the optional count cap. Core ships no count:
+`plans.max_api_keys` stays NULL, and NULL means uncapped.
 
 ⚠️ **Core ships no cap.** `plans.max_api_keys` is nullable and NULL on every
 plan, and the enforcement handler lives in the cloud plugin. In the core edition

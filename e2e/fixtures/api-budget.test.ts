@@ -48,7 +48,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { ApiBudget, ApiRateLimitExceeded, ORG_A_KEY } from "./api-budget.ts";
+import {
+  ApiBudget,
+  ApiRateLimitExceeded,
+  ORG_A_KEY,
+  ORG_A_READONLY_KEY,
+  ORG_B_KEY,
+} from "./api-budget.ts";
 
 const LIMIT = 30;
 /** Measured: the tenant-jwt-boundary probes ran about 155 ms apart on both flaking runs. */
@@ -242,6 +248,33 @@ test("control: the server model rejects an unbudgeted 31st request in one window
 test("control: the server model does not over-reject — 30 unbudgeted requests in one window pass", async () => {
   // The other direction. A model that rejects too eagerly would make a correct budget look broken.
   assert.equal(await unbudgeted(0, BOUNDARY_MS + 5_000, LIMIT), 0);
+});
+
+test("two keys of one org share one budget and two orgs do not", async () => {
+  await onVirtualTime(BOUNDARY_MS + 5_000, async (clock) => {
+    const budget = new ApiBudget();
+    const request = {
+      fetch: async () => {
+        clock.advance(10);
+        return respond(200, { "x-ratelimit-limit": "2" }, "{}");
+      },
+    } as unknown as Parameters<ApiBudget["fetch"]>[0];
+
+    await budget.fetch(request, ORG_A_KEY, "/a");
+    await budget.fetch(request, ORG_A_READONLY_KEY, "/a");
+    const beforeThird = clock.now();
+    await budget.fetch(request, ORG_A_KEY, "/a");
+    const thirdWait = clock.now() - beforeThird;
+    assert.ok(
+      thirdWait >= 30_000,
+      `org A's keys did not share one budget (the third request waited ${thirdWait} ms)`,
+    );
+
+    const beforeOther = clock.now();
+    await budget.fetch(request, ORG_B_KEY, "/b");
+    const otherWait = clock.now() - beforeOther;
+    assert.ok(otherWait < 5_000, `org B shared org A's budget (waited ${otherWait} ms)`);
+  });
 });
 
 test("control: the sweep finds rejections when nothing budgets the traffic", async () => {

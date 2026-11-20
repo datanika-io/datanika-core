@@ -403,8 +403,10 @@ async def _run_async_handler(
         session.commit()
 
         limit_rpm = _rate_limit_svc.get_limit_for_org(api_key.org_id)
+        # Account bucket. ``org:`` keeps it off a bare key id and off the
+        # credential bucket that shedding uses.
         result = _rate_limit_svc.check_rate_limit(
-            bucket=f"{api_key.id}",
+            bucket=f"org:{api_key.org_id}",
             org_id=api_key.org_id,
             limit_rpm=limit_rpm,
             burst_per_sec=settings.api_rate_limit_burst,
@@ -517,8 +519,10 @@ def _run_sync_handler(
         session.commit()
 
         limit_rpm = _rate_limit_svc.get_limit_for_org(api_key.org_id)
+        # Account bucket. ``org:`` keeps it off a bare key id and off the
+        # credential bucket that shedding uses.
         result = _rate_limit_svc.check_rate_limit(
-            bucket=f"{api_key.id}",
+            bucket=f"org:{api_key.org_id}",
             org_id=api_key.org_id,
             limit_rpm=limit_rpm,
             burst_per_sec=settings.api_rate_limit_burst,

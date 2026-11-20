@@ -40,7 +40,7 @@ The load-bearing design choice: the remote server is a **thin authenticated REST
 
 **4.1 The stdio server (the tool surface to reuse).** [`datanika_mcp/server.py`](../../datanika-mcp/src/datanika_mcp/server.py): a **`FastMCP("Datanika")`** instance with 25 `@mcp.tool()`s — 17 read-only, 8 write. Each tool calls `_get_client().<method>()`; the client is a **process-global** `DatanikaClient(url, api_key)` (an httpx wrapper over the REST API), and writes are gated by a **process-global** `_allow_write` via `_require_write()`. `main()` reads `--url/--api-key/--allow-write`, sets the globals, and calls `mcp.run(transport="stdio")`. **The globals are the thing a multi-tenant remote server cannot keep** — see §5.1.
 
-**4.2 The REST API + scope model.** Every endpoint is `@api_endpoint(required_scope="connections:read"|"connections:write"|…)`; `api_middleware` authenticates `Authorization: Bearer etf_<key>`, resolves `api_key.org_id`, enforces the key's scopes, applies the per-key rate limit, and (cloud) records byte-metering. An unscoped key has full access; a `*:read`-only key is rejected on writes (proven by `e2e/tests/rbac.spec.ts`). **This is the entire authz/isolation/limits stack the MCP layer will inherit by calling the API.**
+**4.2 The REST API + scope model.** Every endpoint is `@api_endpoint(required_scope="connections:read"|"connections:write"|…)`; `api_middleware` authenticates `Authorization: Bearer etf_<key>`, resolves `api_key.org_id`, enforces the key's scopes, applies the account rate limit, and (cloud) records byte-metering. An unscoped key has full access; a `*:read`-only key is rejected on writes (proven by `e2e/tests/rbac.spec.ts`). **This is the entire authz/isolation/limits stack the MCP layer will inherit by calling the API.**
 
 **4.3 How the app serves extra routes.** Reflex 0.8.x runs on Starlette; Datanika appends plain `starlette.routing.Route`s to `app._api.routes` (OAuth/SSO/webhooks/health/`/llms.txt` all do this). The `/mcp` endpoint and the OAuth endpoints mount the same way.
 
@@ -83,7 +83,7 @@ Flow (one-click):
 
 Because §5.3 makes the MCP server call `127.0.0.1:8000/api/v1/...` with the caller's org key:
 - **Org isolation** — `api_key.org_id` filters every query (TenantMixin). An agent can only ever see its own org.
-- **Rate limits** — the per-key RPM limit throttles a runaway agent for free (Free 30 / Pro 120 / Ent 300 RPM).
+- **Rate limits** — the account RPM limit throttles a runaway agent for free (Free 30 / Pro 120 / Ent 300 RPM).
 - **V2 byte-metering** — `trigger_*` runs meter GB-processed on the caller's plan exactly as REST-triggered runs do.
 - **Audit** — every tool call is an authed API call → already in the audit log, now with an `mcp` client marker.
 

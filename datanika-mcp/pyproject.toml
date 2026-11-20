@@ -24,11 +24,11 @@ readme = "README.md"
 # constrained by this line and nothing else. Upstream's own guidance for
 # projects staying on v1 is `mcp>=1.28,<2`.
 #
-# 1.29.1 is the current 1.x. The 1.x line is in maintenance mode — security
+# 1.30.0 is the current 1.x. The 1.x line is in maintenance mode — security
 # fixes only — which is a supported state, not an abandoned one; upstream keeps
 # it on the `v1.x` branch expressly for projects holding a `<2` bound.
 dependencies = [
-    "mcp>=1.29.1,<2",
+    "mcp>=1.30.0,<2",
     # >=0.27 -> >=0.28: matches core's own dev-extra floor and the locked
     # 0.28.1. No advisory involved — this one is the same *shape* of gap as the
     # `mcp` floor above, found by looking for it: the existing sub-package guard

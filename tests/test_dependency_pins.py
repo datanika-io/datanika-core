@@ -100,7 +100,15 @@ class TestEveryDependencyIsBounded:
             actual = [int(p) for p in version.split(".") if p.isdigit()]
             if actual[: len(ceiling)] >= ceiling:
                 broken.append(f"{spec} but lock has {version}")
-        assert not broken, "Upper bound excludes the locked version:\n  " + "\n  ".join(broken)
+            floor = re.search(r">=\s*([0-9][0-9a-zA-Z.]*)", spec)
+            if floor:
+                floor_parts = [int(p) for p in floor.group(1).split(".") if p.isdigit()]
+                if actual[: len(floor_parts)] < floor_parts:
+                    broken.append(
+                        f"{spec} but lock has {version} — the image installs "
+                        "from the lock, so a higher floor does not change it"
+                    )
+        assert not broken, "Declared bound excludes the locked version:\n  " + "\n  ".join(broken)
 
 
 class TestInstalledMatchesLock:
@@ -431,3 +439,35 @@ class TestSubPackageFloorsAreNotBelowWhatWeBuild:
             "is advertising support for versions nothing here has ever run:\n  "
             + "\n  ".join(looser)
         )
+
+
+# CVE-2026-115563 is fixed in mcp 1.30.0. 2.2.0 also fixes it, and 2.x renamed
+# FastMCP to MCPServer. The image constrains the datanika-mcp install to
+# uv.lock, so the floor and the lock have to move together.
+_MCP_SPEC = "mcp>=1.30.0,<2"
+_MCP_FIX = (1, 30, 0)
+
+
+class TestMcpStaysOnTheFixedOneLine:
+    def test_core_and_the_sub_package_require_the_fixed_one_line(self):
+        core = _core_specs_by_name()["mcp"]
+        sub = next(
+            spec
+            for spec in _sub_package_dependencies(_SUB_PACKAGES["datanika-mcp"])
+            if _dist_name(spec).lower() == "mcp"
+        )
+        assert core == _MCP_SPEC
+        assert sub == _MCP_SPEC
+        assert _ceiling(core) == (2,)
+        assert _ceiling(sub) == (2,)
+
+    def test_the_lock_resolves_the_fixed_release(self):
+        locked = _locked_versions()["mcp"]
+        actual = tuple(int(p) for p in locked.split(".") if p.isdigit())
+        assert actual[0] < 2
+        assert actual[:3] >= _MCP_FIX, locked
+
+    def test_the_sub_package_comment_names_the_current_one_line(self):
+        text = _SUB_PACKAGES["datanika-mcp"].read_text(encoding="utf-8")
+        assert "1.30.0 is the current 1.x" in text
+        assert "1.29.1 is the current 1.x" not in text

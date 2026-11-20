@@ -10,6 +10,7 @@ from datanika.models.notification import Notification, NotificationType
 from datanika.models.notification_channel import ChannelType, NotificationChannel
 from datanika.models.password_reset import PasswordResetToken
 from datanika.models.pii import (
+    AuditLogPII,
     EmailChangeRequest,
     InvitationPII,
     NotificationChannelPII,
@@ -64,6 +65,7 @@ __all__ = [
     "UserPII",
     "InvitationPII",
     "NotificationChannelPII",
+    "AuditLogPII",
     "EmailChangeRequest",
     "Invitation",
     "InvitationStatus",

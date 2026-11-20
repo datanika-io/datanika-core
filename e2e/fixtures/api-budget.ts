@@ -35,14 +35,17 @@ import type { APIRequestContext, APIResponse } from "@playwright/test";
  *    the outcome deterministic by waiting for the window to roll instead of
  *    letting the wall clock decide.
  *
- * ## What this models, and what breaks if that changes
+ * ## What this models
  *
- * The server buckets on `api_key.id` (`api_middleware.py` passes
- * `bucket=f"{api_key.id}"`), while the *limit* is resolved per org. So each
- * seeded key gets its own budget here. **If bucketing ever moves to per-org,
- * this guard will under-count and the run will hit a real 429** — which is
- * caught loudly by (1) above and names itself, rather than surfacing as a
- * mystery failure on a random route. That is the intended failure mode.
+ * The server buckets the allowance on the account (`api_middleware.py` passes
+ * `bucket=f"org:{org_id}"`). Org A's seeded keys share one budget here, and
+ * org B has its own. Free stays 30 requests per minute; this file does not
+ * raise that number to make a suite fit. A 429 is still the harness failure
+ * in (1).
+ *
+ * A subject missing from `ACCOUNT_OF` is counted on its own. That under-counts
+ * the account the server actually charges, and the 429 names it. Add the new
+ * key to `ACCOUNT_OF`.
  *
  * The budget **self-calibrates**: every response that carries
  * `X-RateLimit-Limit` updates the tracked allowance, so raising the seeded
@@ -77,8 +80,9 @@ import type { APIRequestContext, APIResponse } from "@playwright/test";
  * **So there are now two independent reasons it spends nothing, and only one of them is
  * still load-bearing.** If either `e2e-staging` turns the SSO gate on, or `e2e-sso` stops
  * skipping the seed, switch this spec's import to `../fixtures/auth` and budget its
- * `/api/v1/members` call — otherwise org A's real spend is 37 against a budget that
- * believes it is 36.
+ * `/api/v1/members` call — otherwise that call is one more request on org A's
+ * account, on top of the budgeted total this harness already shares across
+ * org A's keys (10 + 26 + the 3 read-only calls that reach the limiter).
  *
  * Nothing else authenticates with an API key: `smoke-staging` runs in parallel
  * but only touches unauthenticated endpoints, and the seed recreates the keys
@@ -86,14 +90,25 @@ import type { APIRequestContext, APIResponse } from "@playwright/test";
  */
 
 /**
- * The rate-limit subjects the harness spends against — one per seeded API key,
- * because that is what the server buckets on. Named constants rather than bare
- * strings so a typo is a compile error and not a second, silently-unbudgeted
- * subject that reads as "plenty of allowance left".
+ * The rate-limit subjects the harness spends against. The server buckets on
+ * the account, so both org-A names share one state. Named constants rather
+ * than bare strings so a typo is a compile error and not a second,
+ * silently-unbudgeted subject that reads as "plenty of allowance left".
  */
 export const ORG_A_KEY = "org-a-api-key";
 export const ORG_B_KEY = "org-b-api-key";
 export const ORG_A_READONLY_KEY = "org-a-readonly-api-key";
+
+/** Account each seeded key draws on. Both org-A keys are one Free minute. */
+const ACCOUNT_OF: Record<string, string> = {
+  [ORG_A_KEY]: "org-a",
+  [ORG_A_READONLY_KEY]: "org-a",
+  [ORG_B_KEY]: "org-b",
+};
+
+function accountOf(subject: string): string {
+  return ACCOUNT_OF[subject] ?? subject;
+}
 
 /** Free-tier allowance. Only the starting guess — the server's own header wins. */
 const DEFAULT_RPM = Number(process.env.DATANIKA_E2E_API_RPM ?? "30");
@@ -171,10 +186,11 @@ export class ApiBudget {
   private readonly log: string[] = [];
 
   private state(subject: string): SubjectState {
-    let s = this.subjects.get(subject);
+    const account = accountOf(subject);
+    let s = this.subjects.get(account);
     if (!s) {
       s = { window: currentWindow(), spent: 0, limit: DEFAULT_RPM, calibrated: false, sentAt: [] };
-      this.subjects.set(subject, s);
+      this.subjects.set(account, s);
     }
     return s;
   }
@@ -251,8 +267,9 @@ export class ApiBudget {
   /**
    * Issue one budgeted API request.
    *
-   * `subject` must name the API key being spent (the server buckets on the key,
-   * see the header comment). Throws {@link ApiRateLimitExceeded} on a 429 —
+   * `subject` names the API key being spent. The counter is the account's
+   * (`ACCOUNT_OF`), so two keys of one org share one minute. Throws
+   * {@link ApiRateLimitExceeded} on a 429 —
    * never returns one to the caller, so no assertion downstream can silently
    * accept it as a product verdict.
    */

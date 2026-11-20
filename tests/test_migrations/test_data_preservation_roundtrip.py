@@ -395,6 +395,13 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         org_id=org,
         created_at=_ts(next(n)),
     )
+    ids["audit_log_pii"] = _insert(
+        conn,
+        "audit_log_pii",
+        _pk="audit_log_id",
+        audit_log_id=ids["audit_logs"],
+        ip_address="203.0.113.77",
+    )
     ids["catalog_entries"] = _insert(
         conn,
         "catalog_entries",

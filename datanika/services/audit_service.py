@@ -18,13 +18,14 @@ import datanika.models  # noqa: F401
 from datanika.errors import InternalInvariantError
 from datanika.models.audit_log import AuditAction, AuditLog
 from datanika.models.base import Base
+from datanika.models.pii import AuditLogPII
 from datanika.services.backup_service import REDACTED
 
 logger = logging.getLogger(__name__)
 
 
 def _derive_pii_payload_keys() -> frozenset[str]:
-    """Every non-key column of every ``*_pii`` table, plus ``ip_address``.
+    """Every non-key column of every ``*_pii`` table.
 
     Derived rather than hand-listed, because a hand list is what this whole change is
     correcting. It grows on its own the day a fourth PII table or a fifth PII column
@@ -71,15 +72,7 @@ def _derive_pii_payload_keys() -> frozenset[str]:
         if table.name.endswith("_pii")
         for col in table.columns
         if not col.primary_key and not col.foreign_keys
-    ) | {
-        # The one hand-added key, and it has a stated expiry. ``ip_address`` is not a
-        # ``*_pii`` column because D11 declines to build ``audit_log_pii`` for a column
-        # empty in every production row; it belongs in its own column and never in a
-        # payload. When core#670 decides to start collecting client IPs and creates that
-        # sidecar, the derivation picks it up and this literal becomes redundant — delete
-        # it then.
-        "ip_address"
-    }
+    )
 
 
 #: D12.2. Pinned by name because a contract a test cannot address is not a contract.
@@ -161,6 +154,19 @@ def redact_pii_payload(payload: dict | None) -> dict | None:
         return {REDACTION_FAILED_KEY: True}
 
 
+def record_client_address(session: Session, audit_log_id: int, address: str) -> None:
+    """Store a resolved client address beside an audit row, or store nothing.
+
+    ``address`` is whatever ``resolve_client_ip`` already returned. Blank means
+    the resolver refused (a multi-hop chain, loopback, or no header), and a
+    refused address is not a row. This does not write ``audit_logs.ip_address``
+    and does not put the address in a payload.
+    """
+    if not address:
+        return
+    session.add(AuditLogPII(audit_log_id=audit_log_id, ip_address=address))
+
+
 class AuditService:
     def log_action(
         self,
@@ -175,6 +181,10 @@ class AuditService:
         ip_address: str | None = None,
     ) -> AuditLog:
         """Record an audit log entry.
+
+        ``ip_address`` still writes the legacy column. Sign-in does not use it.
+        A client address is ``record_client_address`` on ``audit_log_pii``.
+
 
         This is the single true chokepoint: ``BaseState._audit`` (the ~30 payload call
         sites) and the two direct callers in ``auth_state`` all pass through here, so no

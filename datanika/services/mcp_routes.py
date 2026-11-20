@@ -4,7 +4,7 @@ Mounts the shared ``datanika-mcp`` tool surface over Streamable HTTP on the
 existing Starlette backend and wraps it with a thin bearer-token auth layer.
 The MCP server is a **thin authenticated client of this app's own REST API**
 at ``127.0.0.1:8000``: it forwards the caller's key on every tool call, so org
-isolation, scope enforcement, per-key rate limits, and V2 byte-metering are
+isolation, scope enforcement, the account rate limit, and V2 byte-metering are
 all inherited from ``api_middleware`` — none of it is re-implemented here
 (SPEC_REMOTE_MCP §5.4).
 

@@ -103,6 +103,25 @@ class NotificationChannelPII(Base):
     recipient: Mapped[str] = mapped_column(String(320), nullable=False)
 
 
+class AuditLogPII(Base):
+    """The client address of one authentication audit row. Hard-deleted with that row.
+
+    core#670. This is the column ``audit_logs.ip_address`` was going to be, and
+    is not: the address is personal data, so it lives here from the first row
+    rather than being migrated out of the audit table later. The legacy column
+    stays and is not written. No ``TimestampMixin`` and no ``TenantMixin``, same
+    as the other sidecars — the row identifies a person at one moment, and the
+    audit row it hangs off already carries the org and the time.
+    """
+
+    __tablename__ = "audit_log_pii"
+
+    audit_log_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("audit_logs.id"), primary_key=True, autoincrement=False
+    )
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
+
+
 class EmailChangeRequest(Base, TimestampMixin):
     """A pending email change (D8), deliberately **not** a ``*_pii`` table.
 

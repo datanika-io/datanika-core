@@ -10,16 +10,15 @@ credentials are::
 stdout straight into the keys file, so every diagnostic here must go to stderr.
 
 ── Why many keys, and why this is a seeder rather than a constant ────────────────────────
-``rate_limit_rpm`` resolves per **org** (from the plan row) and buckets per **key**
-(``datanika/services/api_key_service.py``; migration ``e5f6a7b8c9d0`` says the same). Free is
-30 rpm. So an org's achievable authed arrival rate is::
+``rate_limit_rpm`` resolves per **org** and the allowance bucket is that account
+(``org:{org_id}``). Extra keys do not multiply the minute. Free is 30 rpm, so one
+account's authed arrival rate is::
 
-    req/s_ceiling = keys * rate_limit_rpm / 60
+    req/s_ceiling = rate_limit_rpm / 60
 
-161 keys on a free-plan org is 80.5 req/s, which is what Run 9 used and why its top rung was not
-limiter-bound. (The ``/ 60`` above is seconds per minute; it is not the retired floor figure.)
-Raising the plan's rpm and using one key is **not** equivalent —
-161 keys is 161 Redis buckets — and would make the result non-comparable to Run 9.
+(The ``/ 60`` is seconds per minute; it is not the retired floor figure.)
+Extra keys share that one bucket. Run 9 minted 161 keys while the limiter
+still bucketed on the key id; repeating that count does not repeat that ceiling.
 
 ⚠️ ``create_api_key`` emits ``api_key.before_create``, which cloud's ``check_api_key_quota``
 subscribes to. ``plans.max_api_keys`` is NULL on every row, which cloud reads as *uncapped*

@@ -40,6 +40,8 @@ PUBLIC_TABLES: set[str] = {
     "user_pii",
     "invitation_pii",
     "notification_channel_pii",
+    # The sign-in address (core#670). Person-scoped like the other sidecars.
+    "audit_log_pii",
     "email_change_requests",
 }
 

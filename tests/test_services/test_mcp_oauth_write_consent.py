@@ -15,7 +15,7 @@ gives ``create_upload`` and ``trigger_upload`` the *same* scope
 (``uploads:write``). A consent checkbox splitting them could only be enforced
 in the MCP layer while the credential still permitted both — a control the
 token doesn't back, which is the same theatre as the echoed confirmation token.
-Spend is bounded by the per-key rate limit and byte quota instead, which is
+Spend is bounded by the account rate limit and byte quota instead, which is
 what §10 named alongside the phasing.
 
 These tests are about the *grant*, since that is where the decision now lives.

@@ -49,12 +49,10 @@ class ApiKeyService:
 
         The raw key is only available at creation time — only the hash is stored.
 
-        Emits ``api_key.before_create`` first (core#706). This was the only
-        priced dimension with no gate, and the reason was structural rather than
-        an oversight in the limiter: ``api_middleware`` resolves
-        ``rate_limit_rpm`` per **org** and buckets per **key**, so the published
-        per-plan rate bounds nothing while key creation is unbounded. A per-key
-        bucket cannot enforce a per-plan entitlement; only a cap on keys can.
+        Emits ``api_key.before_create`` first (core#706). The allowance itself
+        is one bucket per account (``org:{org_id}``), so another key does not
+        buy another minute. This hook is the optional count cap. ``max_api_keys``
+        NULL means the count is uncapped; the minute budget still applies.
 
         ``emit``, not ``announce`` — a subscriber refusing is the entire point,
         and exceptions must propagate or enforcement silently dies (core#456).

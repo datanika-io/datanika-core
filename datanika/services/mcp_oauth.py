@@ -28,7 +28,7 @@ confirmation before a remote agent spends compute or money. That assumed an
 interactive session; the hosted transport is stateless, and a two-phase token
 the agent mints and echoes to itself is friction, not a gate — the agent is the
 thing being gated. The decision that matters is a *human* one, so it belongs at
-consent, made once and knowingly. Spend is bounded by the per-key rate limit
+consent, made once and knowingly. Spend is bounded by the account's rate limit
 and byte quota, which §10 named alongside the phasing.
 """
 
@@ -84,7 +84,7 @@ _READ_SCOPES = (
 #: "may build but may not trigger" tier: the REST API gives ``create_upload``
 #: and ``trigger_upload`` the same ``uploads:write`` scope, so a split could
 #: only be enforced in the MCP layer while the credential still permitted both.
-#: A control the token doesn't back is theatre. Spend is bounded by the per-key
+#: A control the token doesn't back is theatre. Spend is bounded by the account
 #: rate limit and byte quota instead (SPEC §10).
 _WRITE_SCOPES = (
     "connections:write",

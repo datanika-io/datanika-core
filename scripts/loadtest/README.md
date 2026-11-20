@@ -101,27 +101,19 @@ Prod and staging share one 4 vCPU box with a co-tenant, and the load generator r
 Every number this produces is therefore a lower bound obtained while the machine was doing
 other things. **It must never be published as "Datanika handles N req/s".**
 
-## What decides how high you can go: keys, not hardware
+## What decides how high you can go: the account's minute
 
-`rate_limit_rpm` resolves per **org** (from the plan row) and buckets per **key**. Free is
-30 rpm. So:
+`rate_limit_rpm` resolves per **org**, and keys of that account share one bucket. Free is
+30 rpm, so the authed ceiling for one account is:
 
 ```
-req/s_ceiling = keys * rate_limit_rpm / 60
+req/s_ceiling = rate_limit_rpm / 60
 ```
 
-| target | keys needed at 30 rpm |
-|---|---|
-| 50 req/s sustained (`docs/slo_targets.md`) | >= 100 |
-| 60 req/s (Run 9's top stage) | >= 120 — it used **161** |
-| 80 req/s | >= 160 |
-| 100 req/s | >= 200 |
-| 120 req/s | >= 240 |
-
-⚠️ **The shortcut of raising the plan's rpm and using one key is not equivalent.** 161 keys is
-161 Redis buckets; one key is one. It moves where the limiter's three Redis round trips land
-and makes the result non-comparable to Run 9 in the one dimension this issue is about. If you
-do it, it is a **different run** and must be labelled one.
+That is 0.5 requests per second on Free. Extra keys do not raise it. Run 9 minted 161 keys
+while the limiter still bucketed on the key id, and its ceiling was `keys * rate_limit_rpm / 60`.
+Repeating that key count does not repeat that ceiling. Moving the ceiling means raising the
+plan's `rate_limit_rpm`, and a run that does so is a different run from Run 9.
 
 ## Abort criteria — fixed before the run, in `k6_baseline.js`
 

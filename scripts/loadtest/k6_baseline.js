@@ -27,23 +27,16 @@
 // open model keeps offering the configured rate and records what is dropped — `dropped_iterations`
 // is therefore a PRIMARY result here, not an error.
 //
-// ── THE KEY-COUNT CONSTRAINT, measured 2026-09-20 ─────────────────────────────────────────
-// `rate_limit_rpm` resolves per ORG (from the plan row) and buckets per KEY
-// (`datanika/services/api_key_service.py`, migration `e5f6a7b8c9d0`). Free is 30 rpm. So:
+// ── THE ACCOUNT BUDGET, core#706 ──────────────────────────────────────────────────────────
+// `rate_limit_rpm` resolves per ORG and the allowance bucket is that account (`org:{org_id}`).
+// Free is 30 rpm. Keys of the account share it:
 //
-//     req/s_ceiling = keys * rate_limit_rpm / 60
+//     req/s_ceiling = rate_limit_rpm / 60
 //
-// Run 9 used **161 keys** on a free-plan org: 161 * 30 / 60 = 80.5 req/s, comfortably above the
-// top rung it requested. (The `/ 60` there is seconds per minute, not the retired floor — they
-// are unrelated 60s that sit two lines apart, which is worth knowing before grepping this file.)
-// To go higher you need more keys, not a bigger machine:
-//
-//     50 req/s sustain  -> >= 100 keys        80 req/s -> >= 160        120 req/s -> >= 240
-//
-// ⚠️ The shortcut of raising the plan's rpm and using ONE key is not equivalent. 161 keys is 161
-// Redis buckets; one key is one. It changes where the limiter's three Redis round trips land and
-// makes the result non-comparable to Run 9 in the one dimension this issue is about. If you do
-// it, it is a DIFFERENT run and must be labelled one.
+// (The `/ 60` is seconds per minute, not the retired floor — they are unrelated 60s.)
+// Run 9 used 161 keys while the limiter still bucketed on the key id, so its ceiling was
+// `keys * rate_limit_rpm / 60`. Extra keys do not raise the ceiling now. Raising the plan's
+// rpm is what moves it, and that run is a different run from Run 9.
 //
 // ── ENDPOINTS ─────────────────────────────────────────────────────────────────────────────
 // Recovered from Run 9's own raw sample stream so this run is comparable to it, not re-invented:

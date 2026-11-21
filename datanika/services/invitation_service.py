@@ -110,9 +110,11 @@ class InvitationService:
 
         # Check for existing pending invitation
         existing_inv = session.execute(
-            select(Invitation).where(
+            select(Invitation)
+            .join(InvitationPII, InvitationPII.invitation_id == Invitation.id)
+            .where(
                 Invitation.org_id == org_id,
-                Invitation.email == email,
+                func.lower(InvitationPII.email) == email,
                 Invitation.status == InvitationStatus.PENDING,
             )
         ).scalar_one_or_none()
@@ -125,12 +127,10 @@ class InvitationService:
 
         invitation = Invitation(
             org_id=org_id,
-            email=email,
             role=role,
             invited_by_user_id=invited_by_user_id,
-            # `email` stays until N+2 drops the column. The plaintext token does not:
-            # the mailed value is an unmapped attribute so assigning it cannot flush
-            # back into `invitations.token`.
+            # The address is invitation_pii. The mailed token is an unmapped
+            # attribute so assigning it cannot flush into invitations.token.
             token_hash=hash_invitation_token(token),
             status=InvitationStatus.PENDING,
             expires_at=datetime.now(UTC) + timedelta(days=expires_days),

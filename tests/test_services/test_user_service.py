@@ -201,7 +201,10 @@ class TestGetUser:
     def test_existing(self, svc, db_session, user):
         found = svc.get_user(db_session, user.id)
         assert found is not None
-        assert found.email == "existing@example.com"
+        from datanika.models.pii import UserPII
+
+        assert found.email is None
+        assert db_session.get(UserPII, found.id).email == "existing@example.com"
 
     def test_nonexistent(self, svc, db_session):
         assert svc.get_user(db_session, 99999) is None
@@ -513,7 +516,7 @@ class TestGetMembership:
 class TestFindOrCreateOAuthUser:
     def test_existing_user_returns_not_new(self, svc, db_session, user):
         result_user, is_new = svc.find_or_create_oauth_user(
-            db_session, user.email, "Existing", "google", "g123", email_verified=True
+            db_session, "existing@example.com", "Existing", "google", "g123", email_verified=True
         )
         assert result_user.id == user.id
         assert is_new is False
@@ -541,7 +544,7 @@ class TestFindOrCreateOAuthUser:
         """If existing user has no oauth_provider, it gets updated."""
         assert user.oauth_provider is None
         svc.find_or_create_oauth_user(
-            db_session, user.email, "Existing", "google", "g789", email_verified=True
+            db_session, "existing@example.com", "Existing", "google", "g789", email_verified=True
         )
         from datanika.models.pii import UserPII
 

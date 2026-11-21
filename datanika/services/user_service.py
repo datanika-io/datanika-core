@@ -183,22 +183,17 @@ class UserService:
     def account_address(session: Session, user: User) -> tuple[str | None, str | None]:
         """The address and name the product shows and mails.
 
-        The sidecar wins, so a confirmed email change is the live address even
-        while ``users.email`` still holds the previous one. A missing sidecar
-        value falls back to the legacy column. This read does not write either.
+        Both live on the sidecar. A missing sidecar is a missing address.
+        The legacy columns are not read.
         """
 
         def _text(value: object) -> str | None:
-            # Only a stored string is an address. A missing sidecar falls through.
+            # Only a stored string is an address.
             return value if isinstance(value, str) and value else None
 
         pii = session.get(UserPII, user.id)
         email = _text(pii.email) if pii is not None else None
         full_name = _text(pii.full_name) if pii is not None else None
-        if email is None:
-            email = _text(user.email)
-        if full_name is None:
-            full_name = _text(user.full_name)
         return email, full_name
 
     def get_user(self, session: Session, user_id: int) -> User | None:
@@ -1134,8 +1129,8 @@ class UserService:
             )
 
         pii = self.get_user_pii(session, user_id)
-        erased_email = (pii.email if pii else None) or user.email
-        erased_name = (pii.full_name if pii else None) or user.full_name
+        erased_email = pii.email if pii is not None else None
+        erased_name = pii.full_name if pii is not None else None
         counts: dict[str, int] = {}
 
         # ── step 7, rewritten (§0.1) ───────────────────────────────────────────

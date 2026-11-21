@@ -70,19 +70,21 @@ async def accept_invite(request: Request) -> RedirectResponse:
                     url=f"{settings.frontend_url}/login?invite_error=1", status_code=302
                 )
 
-            # The account address is user_pii. A comparison on users.email misses
-            # everyone registered after N+1 stopped writing that column.
+            # The invitee address is invitation_pii. The legacy column is not read.
+            from datanika.models.pii import InvitationPII
             from datanika.services.user_service import UserService
 
+            invited_pii = session.get(InvitationPII, invitation.id)
+            invited = invited_pii.email if invited_pii is not None else None
             user = None
-            if invitation.email:
-                user = UserService(_auth).get_user_by_email(session, invitation.email)
+            if invited:
+                user = UserService(_auth).get_user_by_email(session, invited)
 
             if user is None:
                 # User needs to register first — redirect to signup with token + email
                 from urllib.parse import quote
 
-                email_param = quote(invitation.email)
+                email_param = quote(invited or "")
                 return RedirectResponse(
                     url=f"{settings.frontend_url}/signup?invite_token={token}&email={email_param}",
                     status_code=302,

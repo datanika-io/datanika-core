@@ -1,8 +1,8 @@
-"""core#939 release N+2 — the contract that drops the five legacy PII columns.
+"""core#939 — unmap the five legacy PII columns.
 
-The release in production stopped reading those columns. This file is red until
-the drop, the model unmap, the erasure block, and the load-test lookup all land
-together. ``audit_logs.ip_address`` stays.
+``origin/master`` still maps them, and SELECT names every mapped column, so this
+release does not drop them. The drop waits until that revision is what production
+runs. ``audit_logs.ip_address`` stays.
 """
 
 from __future__ import annotations
@@ -17,14 +17,6 @@ ROOT = Path(__file__).resolve().parents[2]
 VERSIONS = ROOT / "datanika" / "migrations" / "versions"
 SEED = ROOT / "scripts" / "loadtest" / "seed_loadtest_org.py"
 USER_SERVICE = ROOT / "datanika" / "services" / "user_service.py"
-
-_DROPS = (
-    ("users", "email"),
-    ("users", "full_name"),
-    ("users", "oauth_provider_id"),
-    ("invitations", "email"),
-    ("invitations", "token"),
-)
 
 
 def _upgrade(path: Path) -> ast.FunctionDef | None:
@@ -54,25 +46,6 @@ def _downgrade_text(path: Path) -> str:
     return ast.get_source_segment(path.read_text(encoding="utf-8"), node) or ""
 
 
-def _drop_pairs(upgrade: ast.FunctionDef) -> list[tuple[str, str]]:
-    found: list[tuple[str, str]] = []
-    for node in ast.walk(upgrade):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name != "drop_column":
-            continue
-        args = [
-            arg.value
-            for arg in node.args
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-        ]
-        if len(args) >= 2:
-            found.append((args[0], args[1]))
-    return found
-
-
 def _call_names(upgrade: ast.FunctionDef) -> list[str]:
     names: list[str] = []
     for node in ast.walk(upgrade):
@@ -83,45 +56,51 @@ def _call_names(upgrade: ast.FunctionDef) -> list[str]:
     return names
 
 
-def _contract_migration() -> Path | None:
-    matches: list[Path] = []
-    for path in sorted(VERSIONS.glob("*.py")):
-        upgrade = _upgrade(path)
-        if upgrade is None:
-            continue
-        if set(_drop_pairs(upgrade)) == set(_DROPS):
-            matches.append(path)
-    if len(matches) != 1:
-        return None
-    return matches[0]
+def test_the_contract_revision_drops_nothing():
+    """origin/master still selects the five columns, so this revision cannot drop them.
+
+    Already-applied revisions are outside this assertion. A drop there is history.
+    """
+    matches = sorted(VERSIONS.glob("f8b2c4d6e1a3*.py"))
+    assert len(matches) == 1
+    text = matches[0].read_text(encoding="utf-8")
+    assert "op.drop_column(" not in text
+    assert "op.drop_table(" not in text
+    assert "op.drop_constraint(" not in text
+    upgrade = _upgrade(matches[0])
+    assert upgrade is not None
+    names = _call_names(upgrade)
+    assert "drop_column" not in names
+    assert "drop_table" not in names
+    assert "drop_constraint" not in names
 
 
-def test_n2_drops_exactly_the_five_legacy_columns():
-    path = _contract_migration()
-    assert path is not None, "no migration drops exactly the five legacy PII columns"
+def test_the_stored_recipient_key_is_stripped_and_downgrade_restores_it():
+    matches = [
+        path
+        for path in sorted(VERSIONS.glob("*.py"))
+        if "notification_channels" in path.read_text(encoding="utf-8")
+        and (
+            "- 'email'" in path.read_text(encoding="utf-8")
+            or '- "email"' in path.read_text(encoding="utf-8")
+        )
+    ]
+    assert len(matches) == 1
+    path = matches[0]
+    text = path.read_text(encoding="utf-8")
     upgrade = _upgrade(path)
     assert upgrade is not None
-    assert _call_names(upgrade).count("drop_table") == 0
-    text = path.read_text(encoding="utf-8")
-    assert "expand-contract:" in text
+    names = _call_names(upgrade)
+    assert "drop_column" not in names
+    assert "drop_table" not in names
+    assert "drop_constraint" not in names
     assert "audit_logs" not in text
-    # The recipient key the spec names on an email channel. Not chat_id.
-    assert "- 'email'" in text or '- "email"' in text
     assert "chat_id" not in text
-    assert "notification_channels" in text
-
-
-def test_n2_downgrade_rederives_the_columns_from_the_sidecars():
-    path = _contract_migration()
-    assert path is not None, "no contract migration to downgrade"
     body = _downgrade_text(path)
+    assert body
     assert "one_way" not in body
-    assert "user_pii" in body
-    assert "invitation_pii" in body
-    assert "FROM user_pii" in body or "from user_pii" in body
-    assert "FROM invitation_pii" in body or "from invitation_pii" in body
-    for column in ("email", "full_name", "oauth_provider_id", "token"):
-        assert column in body
+    assert "notification_channel_pii" in body
+    assert "email" in body
 
 
 def test_the_models_no_longer_map_the_legacy_columns():

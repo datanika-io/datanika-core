@@ -30,14 +30,25 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.orm import object_session
 
 import datanika.ui.state.auth_state as auth_state_module
+from datanika.models.pii import UserPII
 from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import ACCESS_TOKEN_TTL_MINUTES, AuthService
 from datanika.services.user_service import UserService
 from datanika.ui.state.auth_state import AuthState, OrgInfo, UserInfo
 
 SECRET = "test-secret-key-for-session-revalidation"
+
+
+def _user_info(u, *, full_name=None):
+    pii = object_session(u).get(UserPII, u.id)
+    return UserInfo(
+        id=u.id,
+        email=pii.email,
+        full_name=pii.full_name if full_name is None else full_name,
+    )
 
 
 @pytest.fixture
@@ -155,7 +166,7 @@ class TestExpiryIsEnforced:
         st = _state(
             access_token=expired,
             refresh_token=auth.create_refresh_token(u.id),
-            current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
+            current_user=_user_info(u),
             current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
         )
         with (
@@ -185,7 +196,7 @@ class TestExpiryIsEnforced:
         st = _state(
             access_token=auth.create_access_token(u.id, first_org.id, expires_minutes=-1),
             refresh_token=auth.create_refresh_token(u.id),
-            current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
+            current_user=_user_info(u),
             current_org=OrgInfo(id=first_org.id, name=first_org.name, slug=first_org.slug),
         )
         with (
@@ -208,7 +219,7 @@ class TestPasswordChangeEndsOtherSessions:
         st = _state(
             access_token=auth.create_access_token(u.id, org.id, expires_minutes=-1),
             refresh_token=auth.create_refresh_token(u.id),
-            current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
+            current_user=_user_info(u),
             current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
         )
         u.password_changed_at = datetime.now(UTC) + timedelta(minutes=5)
@@ -225,7 +236,7 @@ class TestPasswordChangeEndsOtherSessions:
         st = _state(
             access_token="stale",
             refresh_token="stale",
-            current_user=UserInfo(id=u.id, email=u.email or "", full_name="Alice"),
+            current_user=_user_info(u, full_name="Alice"),
             current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
             user_orgs=[OrgInfo(id=org.id, name=org.name, slug=org.slug)],
             current_role="owner",
@@ -288,7 +299,7 @@ class TestOrgSwitchCannotOutliveTheSession:
         st = _state(
             access_token=auth.create_access_token(u.id, org.id, expires_minutes=-1),
             refresh_token="not-a-token",
-            current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
+            current_user=_user_info(u),
             current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
         )
         before = st.access_token

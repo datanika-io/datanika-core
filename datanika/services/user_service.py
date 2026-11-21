@@ -1157,17 +1157,6 @@ class UserService:
             session.delete(pii)
             counts["user_pii"] = 1
 
-        # ── step 1a (§0.2) ─────────────────────────────────────────────────────
-        # NULL the legacy columns. N+1 stopped writing them; N+2 drops them. A row
-        # created before N+1 still holds the address here. Without this, erasure
-        # deletes the sidecar and leaves the original, and nothing short of a raw
-        # query over the legacy columns can see the failure. Possible only because
-        # release N drops these NOT NULLs.
-        # 🚨 DELETE THIS BLOCK IN N+2, when the columns go.
-        user.email = None
-        user.full_name = None
-        user.oauth_provider_id = None
-
         # ── step 2: credentials, hard-deleted ──────────────────────────────────
         #
         # Not soft: an API key that still authenticates for a person who no longer exists
@@ -1222,8 +1211,6 @@ class UserService:
             # a privacy release. CANCELLED is what `cancel_invitation` already writes and
             # what the UI already renders. Raised on core#655.
             inv.status = InvitationStatus.CANCELLED
-            inv.email = None
-            inv.token = None
         counts["invitations_revoked"] = len(pending)
 
         # ── notification channels delivering to this address (criterion 10) ────

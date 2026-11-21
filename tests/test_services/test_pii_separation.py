@@ -6,13 +6,9 @@
 Two criteria in here are written so that **every other erasure assertion passes on the
 broken implementation**, and they are the reason this file is not just a happy-path sweep:
 
-* **8d (§0.2)** — the legacy columns are cleared too, asserted with raw SQL against the
-  columns rather than through the ORM's join. An erasure that deletes the ``user_pii`` row
-  and stops there satisfies criterion 8 (no PII rows), criterion 3
-  (``get_user_by_email`` returns ``None``), makes login structurally impossible and leaves
-  no surface rendering anything — while the address sits untouched in ``users.email``.
-  **Only a query against the legacy column can see it**, and once N+2 drops those columns
-  it becomes untestable, so it is exercised now or never.
+* **8d (§0.2)** — N+2 dropped the legacy columns, so the raw-SQL clearance check is
+  no longer runnable. The test that remains asserts the columns are absent from
+  ``users``.
 * **8e (§0.1)** — the sole-member org is renamed **before** it is soft-deleted, asserted
   *without* a ``deleted_at IS NULL`` filter, because the natural query skips exactly the
   row that carries the problem.
@@ -62,9 +58,6 @@ class TestExtraction:
         assert pii is not None, "register_user did not dual-write user_pii"
         assert pii.email == "alice@example.com"
         assert pii.full_name == "Alice Adams"
-        # N+1 stops writing the legacy columns. N+2 drops them.
-        assert user.email is None
-        assert user.full_name is None
 
     def test_every_active_user_has_exactly_one_pii_row(self, svc, db_session):
         """Criterion 2 — the count check the N backfill has to satisfy.
@@ -122,7 +115,7 @@ class TestInvitationTokenHashing:
         inv = inv_svc.create_invitation(
             db_session, org.id, "Invitee@Example.com", MemberRole.EDITOR, owner.id
         )
-        assert inv.token is None
+        assert "token" not in inv.__table__.columns
         assert inv.token_hash == hash_invitation_token(inv.plaintext_token)
         assert len(inv.token_hash) == 64
 
@@ -187,30 +180,16 @@ class TestErasure:
         # Same transaction, no flush of our own, no waiting.
         assert db_session.get(UserPII, user.id) is None
 
-    def test_the_legacy_columns_are_cleared_too(self, svc, db_session):
-        """🚨 Criterion 8d (§0.2) — the one assertion a working-looking implementation fails.
+    def test_the_legacy_columns_are_not_on_users(self, db_session):
+        """Criterion 8d was a raw read of columns N+2 dropped.
 
-        Read with **raw SQL against the legacy columns**, not through the ORM's join. An
-        erasure that deletes the `user_pii` row and stops there satisfies every other
-        criterion in this class while leaving the address exactly where it was extracted
-        from.
+        The dual-write window is closed. The assertion that remains is that those
+        columns are not on ``users`` to hold a second copy.
         """
-        user, _ = _register(svc, db_session, "leftover@example.com", "Leftover Person")
-        user_id = user.id
-        svc.erase_user(db_session, user_id)
-        db_session.flush()
+        from sqlalchemy import inspect
 
-        row = db_session.execute(
-            text("SELECT email, full_name, oauth_provider_id FROM users WHERE id = :i"),
-            {"i": user_id},
-        ).one()
-        assert row.email is None, (
-            "users.email still holds the erased address. The user_pii row is gone, "
-            "get_user_by_email returns None and login is impossible — and the personal "
-            "datum is still in the database. This is the dual-write window's second copy."
-        )
-        assert row.full_name is None
-        assert row.oauth_provider_id is None
+        cols = {col["name"] for col in inspect(db_session.bind).get_columns("users")}
+        assert {"email", "full_name", "oauth_provider_id"}.isdisjoint(cols)
 
     def test_a_sole_member_org_is_renamed_before_it_is_soft_deleted(self, svc, db_session):
         """🚨 Criterion 8e (§0.1).
@@ -311,12 +290,14 @@ class TestErasure:
         member, _ = _register(svc, db_session, "member2@example.com", "Member Two")
         db_session.add(Membership(user_id=member.id, org_id=org.id, role=MemberRole.EDITOR))
         db_session.flush()
-        before = (org.name, org.slug, owner.email, owner.deleted_at)
+        before_email = db_session.get(UserPII, owner.id).email
+        before = (org.name, org.slug, before_email, owner.deleted_at)
 
         with pytest.raises(UserServiceError):
             svc.erase_user(db_session, owner.id)
 
-        assert (org.name, org.slug, owner.email, owner.deleted_at) == before
+        after_email = db_session.get(UserPII, owner.id).email
+        assert (org.name, org.slug, after_email, owner.deleted_at) == before
         assert db_session.get(UserPII, owner.id) is not None
 
     def test_pending_invitations_this_person_sent_are_revoked(self, auth, svc, db_session):
@@ -333,7 +314,6 @@ class TestErasure:
         refreshed = db_session.get(Invitation, inv_id)
         assert refreshed.status is InvitationStatus.CANCELLED
         assert db_session.get(InvitationPII, inv_id) is None
-        assert refreshed.email is None
 
     def test_the_residual_audit_sweep_reports_its_count(self, svc, db_session):
         """Criterion 8c — it must run and report, not merely not-fail.

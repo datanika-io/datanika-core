@@ -71,9 +71,10 @@ class TestUser:
     def test_columns(self):
         cols = _columns("users")
         assert "id" in cols
-        assert "email" in cols
+        assert "email" not in cols
+        assert "full_name" not in cols
+        assert "oauth_provider_id" not in cols
         assert "password_hash" in cols
-        assert "full_name" in cols
         assert "is_active" in cols
         assert "created_at" in cols
         assert "updated_at" in cols
@@ -82,7 +83,7 @@ class TestUser:
         assert _pk_is_autoincrement("users")
 
     def test_email_is_unique(self):
-        cols = _columns("users")
+        cols = _columns("user_pii")
         assert cols["email"].unique
 
     def test_create_user(self, db_session):
@@ -94,8 +95,6 @@ class TestUser:
         )
 
         assert isinstance(user.id, int)
-        assert user.email is None
-        assert user.full_name is None
         pii = db_session.get(UserPII, user.id)
         assert pii is not None
         assert pii.email == "alice@example.com"

@@ -116,8 +116,7 @@ def test_legacy_pii_columns_have_no_remaining_read_or_write():
     touches = legacy_touches()
     assert touches == [], (
         f"{len(touches)} remaining reads/writes of users.email, users.full_name, "
-        f"users.oauth_provider_id, invitations.email, invitations.token:\n"
-        + "\n".join(touches)
+        f"users.oauth_provider_id, invitations.email, invitations.token:\n" + "\n".join(touches)
     )
 
 

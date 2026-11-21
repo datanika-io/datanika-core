@@ -432,8 +432,9 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         org_id=org,
         role="editor",
         invited_by_user_id=user,
-        # The plaintext column is dropped at this head. The hash is what a lookup
-        # matches, and it is seeded directly so a round trip has a value to carry.
+        # The plaintext token column stays in the database and is unmapped. The
+        # hash is what a lookup matches, and it is seeded directly so a round
+        # trip has a value to carry. The token column itself stays NULL.
         token_hash=hashlib.sha256(_INVITE_TOKEN.encode("utf-8")).hexdigest(),
         status="pending",
         expires_at=_ts(next(n)),
@@ -535,10 +536,13 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
     # These carry the values the erasure feature has to be able to delete, so a
     # round-trip that silently dropped one is exactly the failure that matters.
     #
-    # The legacy columns are gone at this head, so these rows are the copy a
-    # downgrade re-derives them from. `pending_email` and `email_change_requests`
-    # still have no column to come back from; release N's stashes cover that
-    # half, and this fixture is what would go red if a later downgrade lost them.
+    # The legacy address columns stay in the database and are unmapped, so
+    # these sidecar rows are the copy the application reads. This head's
+    # downgrade restores the email key on an email channel's config from
+    # notification_channel_pii. It does not rebuild the user or invitation
+    # columns. `pending_email` and `email_change_requests` still have no
+    # column to come back from; release N's stashes cover that half, and
+    # this fixture is what would go red if a later downgrade lost them.
     #
     # The PK is the FK on all three sidecars, hence `_pk=`.
     ids["user_pii"] = _insert(

@@ -207,9 +207,7 @@ def test_seed_does_not_touch_non_fixture_data(db_session):
     seed(session=db_session)
 
     # The unrelated rows must still exist.
-    assert (
-        _users_with_address(db_session, "real_user@example.com").one_or_none() is not None
-    )
+    assert _users_with_address(db_session, "real_user@example.com").one_or_none() is not None
     assert db_session.get(UserPII, other_user.id) is not None, (
         "the seed's teardown deleted a non-fixture user's PII sidecar"
     )

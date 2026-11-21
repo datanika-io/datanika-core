@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from datanika.models.base import Base
+from datanika.models.pii import UserPII
 from tests.factories import make_user
 
 
@@ -93,7 +94,12 @@ class TestUser:
         )
 
         assert isinstance(user.id, int)
-        assert user.email == "alice@example.com"
+        assert user.email is None
+        assert user.full_name is None
+        pii = db_session.get(UserPII, user.id)
+        assert pii is not None
+        assert pii.email == "alice@example.com"
+        assert pii.full_name == "Alice Smith"
         assert user.is_active is True
 
 

@@ -431,13 +431,14 @@ class TestInvitationsCannotGrantOwnership:
         # Constructed directly rather than through `create_invitation`: the service
         # refuses to create one of these now, which is exactly why accept needs its own
         # guard. It goes through `make_invitation` so the row is *findable* — see below.
+        stale_token = "stale-owner-invitation-token"
         stale = make_invitation(
             db_session,
             org_id=org.id,
             email="invitee@roles.test",
             role=MemberRole.OWNER,
             invited_by_user_id=owner.user_id,
-            token="stale-owner-invitation-token",
+            token=stale_token,
         )
 
         # 🚨 Preconditions, and they are the point of this pair of lines rather than
@@ -447,10 +448,11 @@ class TestInvitationsCannotGrantOwnership:
         # `token` and no `token_hash`, and the user carried `users.email` and no
         # sidecar; under the core#939 N+1 mutation both lookups miss, the assertion
         # below passes on the *first* reason, and nothing goes red. Measured.
-        assert inv.get_invitation_by_token(db_session, stale.token) is not None
+        assert stale.token is None
+        assert inv.get_invitation_by_token(db_session, stale_token) is not None
         assert UserService(auth).get_user_by_email(db_session, "invitee@roles.test") is not None
 
-        assert inv.accept_invitation(db_session, stale.token) is None
+        assert inv.accept_invitation(db_session, stale_token) is None
         assert _owner_count(db_session, org.id) == 1
         assert (
             db_session.query(Membership)

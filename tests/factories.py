@@ -48,15 +48,15 @@ def make_user(
     """Create a ``User`` and its ``user_pii`` sidecar, flushed, the way production does.
 
     ``**kwargs`` passes through to the ``User`` constructor (``password_hash``,
-    ``is_active``, ``email_verified``, ``oauth_provider_id``, …). ``oauth_provider_id``
-    is mirrored onto the sidecar as well, because it lives on both — for SSO it is the
-    **email address verbatim**, which is why `models/pii.py` carries it at all.
+    ``is_active``, ``email_verified``, …). ``oauth_provider_id`` is personal data
+    and is stored only on the sidecar.
 
     ``full_name`` defaults rather than being required: ``user_pii.full_name`` is
     ``nullable=False``, so a caller who does not care still has to supply something, and
     making every call site invent a name would be noise.
     """
-    user = User(email=email, full_name=full_name, **kwargs)
+    oauth_provider_id = kwargs.pop("oauth_provider_id", None)
+    user = User(**kwargs)
     session.add(user)
     session.flush()
     session.add(
@@ -64,7 +64,7 @@ def make_user(
             user_id=user.id,
             email=email,
             full_name=full_name,
-            oauth_provider_id=kwargs.get("oauth_provider_id"),
+            oauth_provider_id=oauth_provider_id,
         )
     )
     session.flush()
@@ -103,19 +103,19 @@ def make_invitation(
     change that breaks it.* ``make_user`` alone does not fix it — the user being
     resolvable is necessary, and the invitation being resolvable is the other half.
 
-    ``token`` is still written because release N dual-writes it; N+2 drops the column,
-    at which point this helper is the one place that changes.
+    The plaintext ``token`` is not stored on the row. Lookups match ``token_hash``.
+    The returned object carries ``plaintext_token`` so a test can present the value
+    the mail would have carried.
     """
     invitation = Invitation(
         org_id=org_id,
-        email=email,
         role=role,
         invited_by_user_id=invited_by_user_id,
-        token=token,
         token_hash=hash_invitation_token(token),
         status=status,
         expires_at=datetime.now(UTC) + timedelta(days=expires_days),
     )
+    invitation.plaintext_token = token
     session.add(invitation)
     session.flush()
     session.add(InvitationPII(invitation_id=invitation.id, email=email))

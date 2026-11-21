@@ -316,7 +316,13 @@ def _tear_down_fixture(session: Session) -> None:
         _delete_cloud_org_rows(session, org_ids)
         session.execute(Organization.__table__.delete().where(Organization.id.in_(org_ids)))
 
-    users = list(session.execute(select(User).where(User.email.in_(fixture_user_emails))).scalars())
+    users = list(
+        session.execute(
+            select(User)
+            .join(UserPII, UserPII.user_id == User.id)
+            .where(UserPII.email.in_(fixture_user_emails))
+        ).scalars()
+    )
     user_ids = [u.id for u in users]
     if user_ids:
         _delete_oauth_chain(session, select(ApiKey.id).where(ApiKey.user_id.in_(user_ids)))
@@ -341,26 +347,15 @@ def _tear_down_fixture(session: Session) -> None:
 def _add_user(session: Session, *, email: str, password_hash: str, full_name: str) -> User:
     """Create a fixture user **and** its ``user_pii`` sidecar. Both, always.
 
-    ``SPEC_PII_SEPARATION.md`` §8a.2, Step A. Release N dual-writes: every path that
-    creates a person through ``UserService`` writes the legacy columns *and* the sidecar,
-    and the expand migration backfilled every pre-existing row. A fixture that writes only
-    the legacy columns therefore produces a row **the dual-write invariant says cannot
-    exist**.
-
-    That is survivable today only because ``get_user_by_email`` still carries a legacy
-    ``or_`` half. N+1 deletes it, and from that moment a sidecar-less user is invisible to
-    every lookup by address while their ``Membership`` row is untouched — which is how
-    ``create_invitation``'s already-a-member guard comes to fail open (§8a.4 Kind 3,
-    core#1010).
+    The address and name live on ``user_pii``. The legacy columns stay null so a
+    later drop of those columns changes nothing this fixture does.
 
     🚨 Deliberately **not** implemented by calling ``UserService._sync_user_pii``: core#939
     item 3 deletes that method in N+1, so a fixture built on it breaks at exactly the
     release this helper exists to protect.
     """
     user = User(
-        email=email,
         password_hash=password_hash,
-        full_name=full_name,
         is_active=True,
         email_verified=True,
     )
@@ -520,18 +515,18 @@ def _build_fixture(session: Session) -> SeedResult:
         org_id=org.id,
         org_slug=org.slug,
         user_id=user.id,
-        user_email=user.email,
+        user_email=FIXTURE_USER_EMAIL,
         user_password=FIXTURE_USER_PASSWORD,
         connection_id=connection.id,
         connection_name=connection.name,
         connection_type=ConnectionType.DUCKDB.value,
         viewer_user_id=viewer_user.id,
-        viewer_user_email=viewer_user.email,
+        viewer_user_email=FIXTURE_VIEWER_USER_EMAIL,
         viewer_user_password=FIXTURE_VIEWER_USER_PASSWORD,
         org_b_id=org_b.id,
         org_b_slug=org_b.slug,
         org_b_user_id=org_b_user.id,
-        org_b_user_email=org_b_user.email,
+        org_b_user_email=FIXTURE_ORG_B_USER_EMAIL,
         org_b_user_password=FIXTURE_ORG_B_USER_PASSWORD,
         org_b_connection_id=org_b_connection.id,
         org_b_upload_id=org_b_upload.id,

@@ -169,21 +169,28 @@ class SettingsState(BaseState):
             self.leaving_switches_me_to = remaining[0].name if remaining else ""
 
             # Load pending invitations
+            from datanika.models.pii import InvitationPII
             from datanika.services.invitation_service import InvitationService
 
             inv_svc = InvitationService(AuthService(app_settings.secret_key))
             invitations = inv_svc.list_pending_invitations(session, auth_state.current_org.id)
-            self.pending_invitations = [
-                InvitationItem(
-                    id=inv.id,
-                    email=inv.email,
-                    role=inv.role.value,
-                    created_at=(
-                        inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else ""
-                    ),
+            pending: list[InvitationItem] = []
+            for inv in invitations:
+                invited_pii = session.get(InvitationPII, inv.id)
+                address = ""
+                if invited_pii is not None and invited_pii.email:
+                    address = invited_pii.email
+                pending.append(
+                    InvitationItem(
+                        id=inv.id,
+                        email=address,
+                        role=inv.role.value,
+                        created_at=(
+                            inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else ""
+                        ),
+                    )
                 )
-                for inv in invitations
-            ]
+            self.pending_invitations = pending
         self.error_message = ""
 
     async def update_org(self):

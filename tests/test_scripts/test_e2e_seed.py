@@ -37,6 +37,13 @@ from tests.factories import make_user
 _VALID_FERNET_KEY = "NS7W71uT0X-FxSq_mwJfthZzc3hIatYjQHM3MhDnQX8="
 
 
+def _users_with_address(session, email: str):
+    """Fixture users are found on the sidecar. ``users.email`` is not written."""
+    return session.execute(
+        select(User).join(UserPII, UserPII.user_id == User.id).where(UserPII.email == email)
+    ).scalars()
+
+
 @pytest.fixture(autouse=True)
 def _fernet_key(monkeypatch):
     """The insecure default config key is not a valid Fernet key — patch it."""
@@ -52,7 +59,7 @@ def test_seed_creates_fixture_on_empty_db(db_session):
     assert result.connection_name == FIXTURE_CONNECTION_NAME
     assert result.connection_type == ConnectionType.DUCKDB.value
 
-    user = db_session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalar_one()
+    user = _users_with_address(db_session, FIXTURE_USER_EMAIL).one()
     assert user.email_verified is True
     assert user.is_active is True
     # Password is verifiable — the contract with Playwright is the plaintext password.
@@ -82,36 +89,32 @@ def test_seed_creates_fixture_on_empty_db(db_session):
 def test_every_seeded_user_has_a_matching_pii_sidecar(db_session):
     """Step A — ``SPEC_PII_SEPARATION.md`` §8a.2, core#1009.
 
-    Release N dual-writes: `UserService.register_user` writes the legacy columns *and*
-    the sidecar, and the expand migration backfilled every pre-existing row. So in
-    production **every user has a `user_pii` row**, and `get_user_by_email`'s legacy
-    `or_` half is a blue/green window, not a fallback for missing sidecars.
-
-    This seed bypassed the service and wrote only the legacy columns, producing three
-    rows the invariant says cannot exist. It is survivable under N — which is precisely
-    why nobody noticed — and it stops being survivable at N+1, where the legacy half is
-    deleted and a sidecar-less user becomes invisible to every lookup by address while
-    their `Membership` row is untouched.
-
-    🔑 Asserting the **content** and not merely the row's existence is the point: a
-    sidecar holding a different address is worse than a missing one, because every
-    lookup succeeds and returns the wrong person.
+    The fixture address lives on ``user_pii``. The legacy columns stay null, so a
+    sidecar holding a different address is a lookup for the wrong person, and a
+    missing sidecar is a user no address lookup can find.
     """
-    from datanika.models.pii import UserPII
-
     seed(session=db_session)
 
     users = list(db_session.execute(select(User)).scalars())
     # Anti-vacuity: an empty or shrunken fixture would satisfy every assertion below.
     assert len(users) == 3, f"precondition: the fixture is three users, got {len(users)}"
 
-    missing = [u.email for u in users if db_session.get(UserPII, u.id) is None]
+    missing = [u.id for u in users if db_session.get(UserPII, u.id) is None]
     assert missing == [], f"seeded users with no user_pii row: {missing}"
 
+    expected = {
+        FIXTURE_USER_EMAIL,
+        FIXTURE_VIEWER_USER_EMAIL,
+        FIXTURE_ORG_B_USER_EMAIL,
+    }
     for u in users:
         pii = db_session.get(UserPII, u.id)
-        assert pii.email == u.email, f"sidecar address diverges for user {u.id}"
-        assert pii.full_name == u.full_name, f"sidecar name diverges for user {u.id}"
+        assert pii.email in expected, f"sidecar address is not a fixture address for user {u.id}"
+        assert pii.full_name, f"sidecar name is empty for user {u.id}"
+        assert u.email is None
+        assert u.full_name is None
+        expected.remove(pii.email)
+    assert expected == set()
 
 
 def test_seed_is_idempotent(db_session):
@@ -121,7 +124,7 @@ def test_seed_is_idempotent(db_session):
 
     # IDs may differ because teardown+rebuild re-inserts, but there must
     # be exactly one fixture user / org / connection after the second call.
-    users = list(db_session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalars())
+    users = list(_users_with_address(db_session, FIXTURE_USER_EMAIL))
     assert len(users) == 1
 
     orgs = list(
@@ -204,12 +207,7 @@ def test_seed_does_not_touch_non_fixture_data(db_session):
     seed(session=db_session)
 
     # The unrelated rows must still exist.
-    assert (
-        db_session.execute(
-            select(User).where(User.email == "real_user@example.com")
-        ).scalar_one_or_none()
-        is not None
-    )
+    assert _users_with_address(db_session, "real_user@example.com").one_or_none() is not None
     assert db_session.get(UserPII, other_user.id) is not None, (
         "the seed's teardown deleted a non-fixture user's PII sidecar"
     )
@@ -334,9 +332,7 @@ def test_seed_creates_viewer_user_in_org_a(db_session):
     """A second user with VIEWER role exists in org A for RBAC tests."""
     result = seed(session=db_session)
 
-    viewer = db_session.execute(
-        select(User).where(User.email == FIXTURE_VIEWER_USER_EMAIL)
-    ).scalar_one()
+    viewer = _users_with_address(db_session, FIXTURE_VIEWER_USER_EMAIL).one()
     assert viewer.is_active is True
     assert viewer.email_verified is True
     assert result.viewer_user_id == viewer.id
@@ -377,9 +373,7 @@ def test_seed_creates_org_b_with_full_resource_set(db_session):
     # Org B owner is a DIFFERENT user from the primary fixture user, so
     # tenant-isolation tests have a clean "user in A only" vs "user in B only"
     # distinction.
-    org_b_owner = db_session.execute(
-        select(User).where(User.email == FIXTURE_ORG_B_USER_EMAIL)
-    ).scalar_one()
+    org_b_owner = _users_with_address(db_session, FIXTURE_ORG_B_USER_EMAIL).one()
     assert result.org_b_user_id == org_b_owner.id
     assert result.org_b_user_email == FIXTURE_ORG_B_USER_EMAIL
     owner_membership = db_session.execute(
@@ -489,13 +483,9 @@ def test_seed_is_idempotent_with_extended_fixture(db_session, monkeypatch):
         assert len(rows) == 1, f"{model.__name__} duplicated in org B after re-seed"
 
     # Viewer user and org B owner each exist exactly once.
-    viewers = list(
-        db_session.execute(select(User).where(User.email == FIXTURE_VIEWER_USER_EMAIL)).scalars()
-    )
+    viewers = list(_users_with_address(db_session, FIXTURE_VIEWER_USER_EMAIL))
     assert len(viewers) == 1
-    org_b_owners = list(
-        db_session.execute(select(User).where(User.email == FIXTURE_ORG_B_USER_EMAIL)).scalars()
-    )
+    org_b_owners = list(_users_with_address(db_session, FIXTURE_ORG_B_USER_EMAIL))
     assert len(org_b_owners) == 1
 
     # Exactly 3 api keys (org A owner, org B owner, org A read-only).
@@ -608,7 +598,7 @@ class TestTeardownWithOAuthGrants:
         org = session.execute(
             select(Organization).where(Organization.slug == FIXTURE_ORG_SLUG)
         ).scalar_one()
-        user = session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalar_one()
+        user = _users_with_address(session, FIXTURE_USER_EMAIL).one()
         # Consent mints the key (SPEC_REMOTE_MCP §5.3), so create it here rather
         # than relying on the seed — this is what a hosted authorization leaves
         # behind in a fixture org.
@@ -660,7 +650,7 @@ class TestTeardownWithOAuthGrants:
         seed(session=session)
         grant = self._grant_for_fixture_org(session)
         # Point the grant at a key reached only through the user-id delete.
-        user = session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalar_one()
+        user = _users_with_address(session, FIXTURE_USER_EMAIL).one()
         # A real org that is *not* a fixture org: the org-branch delete skips it,
         # so the key is only reachable through the user-id delete. (It has to
         # exist — with foreign keys on, an invented org_id fails on insert.)
@@ -729,7 +719,7 @@ class TestTeardownWithPIIChildren:
 
     @staticmethod
     def _fixture_user(session):
-        return session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalar_one()
+        return _users_with_address(session, FIXTURE_USER_EMAIL).one()
 
     def test_teardown_succeeds_when_the_migration_backfilled_user_pii(self, fk_enforced):
         """The exact staging failure: a backfilled user_pii row blocks the delete.

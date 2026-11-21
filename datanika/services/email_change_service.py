@@ -95,15 +95,8 @@ class EmailChangeService:
 
         normalised = _normalise(raw_email)
         pii = self._users.get_user_pii(session, user.id)
-        # The live address is the sidecar. ``users.email`` is left at the
-        # previous value once a confirmation stops writing it, so treating it
-        # as current would refuse a change back to that address.
-        if pii is not None and pii.email:
-            current = {_normalise(pii.email)}
-        elif user.email:
-            current = {_normalise(user.email)}
-        else:
-            current = set()
+        # The live address is the sidecar. The legacy column is not current.
+        current = {_normalise(pii.email)} if pii is not None and pii.email else set()
         current.discard("")
 
         # Visible on purpose. See the module docstring.

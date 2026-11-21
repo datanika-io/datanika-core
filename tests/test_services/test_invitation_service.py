@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from datanika.models.invitation import Invitation, InvitationStatus
-from datanika.models.pii import UserPII
+from datanika.models.pii import InvitationPII, UserPII
 from datanika.models.user import MemberRole, Membership, Organization, User
 from datanika.services.auth import AuthService
 from datanika.services.invitation_service import InvitationService
@@ -59,7 +59,9 @@ class TestCreateInvitation:
             db_session, org.id, "newuser@test.com", MemberRole.EDITOR, owner.id
         )
         assert inv.id is not None
-        assert inv.email == "newuser@test.com"
+        invited = db_session.get(InvitationPII, inv.id)
+        assert invited is not None and invited.email == "newuser@test.com"
+        assert inv.email is None
         assert inv.role == MemberRole.EDITOR
         assert inv.status == InvitationStatus.PENDING
         assert inv.token is None
@@ -75,8 +77,9 @@ class TestCreateInvitation:
             )
 
     def test_already_member_rejected(self, db_session, inv_svc, org, owner):
+        address = db_session.get(UserPII, owner.id).email
         with pytest.raises(ValueError, match="already a member"):
-            inv_svc.create_invitation(db_session, org.id, owner.email, MemberRole.EDITOR, owner.id)
+            inv_svc.create_invitation(db_session, org.id, address, MemberRole.EDITOR, owner.id)
 
 
 class TestAlreadyMemberGuardDoesNotRestOnTheIdentityLookup:
@@ -349,5 +352,5 @@ class TestListPendingInvitations:
 
         pending = inv_svc.list_pending_invitations(db_session, org.id)
         assert len(pending) == 2
-        emails = {i.email for i in pending}
+        emails = {db_session.get(InvitationPII, i.id).email for i in pending}
         assert emails == {"pending1@test.com", "pending2@test.com"}

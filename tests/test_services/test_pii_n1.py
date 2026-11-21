@@ -71,7 +71,9 @@ def test_a_new_invitation_keeps_the_address_and_stops_storing_the_plaintext_toke
     inv = invites.create_invitation(
         db_session, org.id, "Invitee@Example.com", MemberRole.EDITOR, owner.id
     )
-    assert inv.email == "invitee@example.com"
+    invited = db_session.get(InvitationPII, inv.id)
+    assert invited is not None and invited.email == "invitee@example.com"
+    assert inv.email is None
     assert inv.token is None
     raw = inv.plaintext_token
     assert raw

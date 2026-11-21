@@ -364,7 +364,6 @@ class TestFindOrCreateOAuthUserTrust:
         assert linked.oauth_provider == "github"
         from datanika.models.pii import UserPII
 
-        assert linked.oauth_provider_id is None
         assert db_session.get(UserPII, linked.id).oauth_provider_id == "victim-subject"
 
     def test_legacy_row_without_subject_is_bound_late(self, user_svc, db_session, auth):
@@ -386,7 +385,6 @@ class TestFindOrCreateOAuthUserTrust:
         assert found.id == u.id
         from datanika.models.pii import UserPII
 
-        assert found.oauth_provider_id is None
         assert db_session.get(UserPII, found.id).oauth_provider_id == "sub-late"
 
     def test_empty_subject_does_not_match_everyone(self, user_svc, db_session, auth):

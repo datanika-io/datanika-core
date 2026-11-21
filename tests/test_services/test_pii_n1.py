@@ -1,8 +1,7 @@
-"""N+1 stops writing legacy personal-data columns. core#939, release N+1 only.
+"""Register, invite, and channel create keep personal data on the sidecars.
 
-These assertions are red while register, confirm, invite, and channel create
-still copy the address onto ``users`` / ``invitations.token`` / channel JSON.
-N+2, which drops the columns, is a later migration and is not this file.
+core#939. N+1 stopped writing the legacy columns. N+2 dropped them, so these
+tests no longer read those attributes. The sidecar is the copy that remains.
 """
 
 from __future__ import annotations
@@ -30,11 +29,9 @@ def test_register_writes_the_sidecar_and_leaves_the_legacy_columns_empty(db_sess
     assert pii is not None
     assert pii.email == "ada@example.com"
     assert pii.full_name == "Ada Lovelace"
-    assert user.email is None
-    assert user.full_name is None
 
 
-def test_get_user_by_email_misses_an_address_that_lives_only_on_the_legacy_column(db_session):
+def test_get_user_by_email_misses_when_the_sidecar_row_is_gone(db_session):
     _, users, _ = _services()
     user = make_user(
         db_session, email="legacy-only@example.com", full_name="Legacy", password_hash="x"
@@ -42,7 +39,6 @@ def test_get_user_by_email_misses_an_address_that_lives_only_on_the_legacy_colum
     pii = db_session.get(UserPII, user.id)
     assert pii is not None
     db_session.delete(pii)
-    user.email = "legacy-only@example.com"
     db_session.flush()
     assert users.get_user_by_email(db_session, "legacy-only@example.com") is None
 
@@ -54,9 +50,6 @@ def test_oauth_create_keeps_the_provider_on_the_user_and_the_subject_on_the_side
     )
     assert is_new is True
     assert created.oauth_provider == "github"
-    assert created.email is None
-    assert created.full_name is None
-    assert created.oauth_provider_id is None
     pii = db_session.get(UserPII, created.id)
     assert pii is not None
     assert pii.email == "oauth@example.com"
@@ -73,8 +66,6 @@ def test_a_new_invitation_keeps_the_address_and_stops_storing_the_plaintext_toke
     )
     invited = db_session.get(InvitationPII, inv.id)
     assert invited is not None and invited.email == "invitee@example.com"
-    assert inv.email is None
-    assert inv.token is None
     raw = inv.plaintext_token
     assert raw
     assert inv.token_hash == hash_invitation_token(raw)
@@ -123,16 +114,12 @@ def test_confirming_an_email_change_moves_the_sidecar_and_leaves_the_legacy_colu
     _, users, _ = _services()
     user = users.register_user(db_session, "alice@example.com", "alice password", "Alice")
     users.create_org(db_session, "Alice Org", f"org-{user.id}", user.id)
-    # The factory-shaped legacy column is what a pre-N+1 row still holds.
-    user.email = "alice@example.com"
-    db_session.flush()
     changes = EmailChangeService(users)
     prepared = changes.prepare_change(db_session, user.id, "new@example.com")
     assert prepared.status == READY
     confirmed = changes.confirm_change(db_session, prepared.token)
     db_session.refresh(user)
     assert confirmed is not None
-    assert user.email == "alice@example.com"
     assert db_session.get(UserPII, user.id).email == "new@example.com"
     assert user.email_verified is True
     # The stale legacy column must not block a return to the previous address.

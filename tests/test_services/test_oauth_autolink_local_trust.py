@@ -102,7 +102,6 @@ class TestAutoLinkRequiresBothSides:
         assert unproven_local_account.oauth_provider is None, (
             "a refused link must leave no trace on the account it targeted"
         )
-        assert unproven_local_account.oauth_provider_id is None
 
     def test_the_refusal_names_a_way_back(self, user_svc, db_session, unproven_local_account):
         """A refusal a legitimate user cannot act on is a lockout.
@@ -152,7 +151,6 @@ class TestAutoLinkRequiresBothSides:
         assert linked.oauth_provider == "github"
         from datanika.models.pii import UserPII
 
-        assert linked.oauth_provider_id is None
         assert db_session.get(UserPII, linked.id).oauth_provider_id == "proven-subject"
 
     def test_an_account_with_no_password_of_its_own_still_links(self, user_svc, db_session, auth):

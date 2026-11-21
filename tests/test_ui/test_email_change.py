@@ -112,7 +112,6 @@ class TestTheLiveAddressDoesNotMove:
         st = _state(user.id, 1)
         delay = await _request(st, db_session, {"new_email": "new@example.com"})
         db_session.refresh(user)
-        assert user.email is None
         assert _pii(db_session, user.id).email == "alice@example.com"
         assert _pii(db_session, user.id).pending_email == "new@example.com"
         assert st.email_change_state == "queued"
@@ -153,7 +152,6 @@ class TestEveryOutcomeIsDistinguishable:
         assert delay.call_count == 0
         assert limiter.check_window.call_count == 0
         assert _pii(db_session, user.id).pending_email is None
-        assert user.email is None
 
     @pytest.mark.asyncio
     async def test_a_refusal_does_not_send_and_is_its_own_state(self, db_session, user):
@@ -199,7 +197,6 @@ class TestEveryOutcomeIsDistinguishable:
         delay = await _request(st, db_session, {"new_email": "bob@example.com"})
         assert st.email_change_state == "address_taken"
         assert delay.call_count == 0
-        assert user.email is None
         assert _pii(db_session, user.id).pending_email is None
 
     @pytest.mark.asyncio
@@ -217,7 +214,6 @@ class TestEveryOutcomeIsDistinguishable:
             await AccountState.request_email_change.fn(st, {"new_email": "new@example.com"})
         db_session.refresh(user)
         assert st.email_change_state == "failed"
-        assert user.email is None
         assert _pii(db_session, user.id).pending_email is None
 
 
@@ -230,7 +226,6 @@ class TestCancel:
         with patch.object(acc, "get_sync_session", return_value=_session_patch(db_session)):
             await AccountState.cancel_email_change.fn(st)
         db_session.refresh(user)
-        assert user.email is None
         assert _pii(db_session, user.id).pending_email is None
         assert st.email_change_state == "cancelled"
         assert st.pending_email == ""
@@ -289,7 +284,6 @@ class TestConfirmPage:
         with patch.object(confirm_mod, "get_sync_session", return_value=_session_patch(db_session)):
             await EmailChangeState.load_token.fn(st)
         assert st.token_valid is True
-        assert user.email is None
         row_used = EmailChangeService(svc).validate_token(db_session, prepared.token)
         assert row_used is not None
 
@@ -306,7 +300,6 @@ class TestConfirmPage:
             await EmailChangeState.confirm.fn(st)
         db_session.refresh(user)
         assert st.confirmed is True
-        assert user.email is None
         pii = db_session.get(UserPII, user.id)
         assert pii is not None and pii.email == "new@example.com"
         assert user.email_verified is True
@@ -314,5 +307,4 @@ class TestConfirmPage:
             await EmailChangeState.confirm.fn(st)
         db_session.refresh(user)
         assert st.confirmed is False
-        assert user.email is None
         assert db_session.get(UserPII, user.id).email == "new@example.com"

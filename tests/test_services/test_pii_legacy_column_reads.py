@@ -1,19 +1,10 @@
-"""The legacy PII columns are not read or written, except the erasure nulls.
+"""The legacy PII columns are not read or written.
 
-core#939. Release N+1 stopped the product from treating these columns as the
-address, and that release is already in production. A later release drops the
-columns. This guard is what makes that drop a migration: the code deployed
-before it must not select, filter, or insert them.
-
-``erase_user`` step 1a still assigns NULL. The columns still exist, and an
-erasure that skips them leaves the original. That block is deleted in the
-release that drops the columns, not in this one.
-
-Measured on ``af2ab047`` before this change: 22 executable reads and writes
-outside that block and outside the mapped column definitions. Two further
-``inv.email`` hits are the settings page rendering ``InvitationItem``, which
-is filled from the column at ``settings_state.py``. Those are not a second
-read of ``invitations.email``.
+core#939 release N+2 dropped ``users.email``, ``users.full_name``,
+``users.oauth_provider_id``, ``invitations.email`` and ``invitations.token``.
+This guard fails if product code starts referring to those attributes again.
+The settings page's ``inv`` is an ``InvitationItem``, filled from the sidecar,
+not a row.
 """
 
 from __future__ import annotations
@@ -29,9 +20,6 @@ INVITATION_ATTRS = frozenset({"email", "token"})
 USER_NAMES = frozenset({"User", "user", "viewer_user", "org_b_user"})
 INVITATION_NAMES = frozenset({"Invitation", "invitation", "inv", "existing_inv"})
 
-# Step 1a. A store of None on these names, inside erase_user only.
-STEP_1A = frozenset({"email", "full_name", "oauth_provider_id", "token"})
-
 
 def _py_files() -> list[Path]:
     files: list[Path] = []
@@ -45,31 +33,6 @@ def _py_files() -> list[Path]:
                 continue
             files.append(path)
     return files
-
-
-def _enclosing_function(tree: ast.AST, node: ast.AST) -> str | None:
-    for parent in ast.walk(tree):
-        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for child in ast.walk(parent):
-                if child is node:
-                    return parent.name
-    return None
-
-
-def _is_step_1a_store(tree: ast.AST, node: ast.Attribute) -> bool:
-    if not isinstance(node.ctx, ast.Store):
-        return False
-    if node.attr not in STEP_1A:
-        return False
-    if _enclosing_function(tree, node) != "erase_user":
-        return False
-    # The assignment's value is None. Walk assigns whose target is this node.
-    for parent in ast.walk(tree):
-        if isinstance(parent, ast.Assign) and node in parent.targets:
-            return isinstance(parent.value, ast.Constant) and parent.value.value is None
-        if isinstance(parent, ast.AnnAssign) and parent.target is node:
-            return isinstance(parent.value, ast.Constant) and parent.value.value is None
-    return False
 
 
 def _receiver_name(node: ast.Attribute) -> str | None:
@@ -97,8 +60,6 @@ def legacy_touches() -> list[str]:
                     if keyword.arg in banned:
                         found.append(f"{rel}:{node.lineno}: {node.func.id}({keyword.arg}=)")
             if not isinstance(node, ast.Attribute):
-                continue
-            if _is_step_1a_store(tree, node):
                 continue
             receiver = _receiver_name(node)
             # The settings page's ``inv`` is an ``InvitationItem``, not a row.

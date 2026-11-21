@@ -114,10 +114,15 @@ def _org_and_admin(session):
     # `datanika.models.organization`, a module that does not exist. Organization is
     # declared in `datanika/models/user.py`. Importing from the package root instead
     # of either file means a future move does not break this again.
-    from datanika.models import Organization, User
+    from datanika.models import Organization, User, UserPII
 
     org = session.query(Organization).filter(Organization.name == ORG_NAME).one_or_none()
-    user = session.query(User).filter(User.email == USER_EMAIL).one_or_none()
+    user = (
+        session.query(User)
+        .join(UserPII, UserPII.user_id == User.id)
+        .filter(UserPII.email == USER_EMAIL)
+        .one_or_none()
+    )
     if org is None or user is None:
         _die(
             "REFUSING: the load-test org/user does not exist. Create it deliberately once "

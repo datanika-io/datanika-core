@@ -448,7 +448,7 @@ class TestInvitationsCannotGrantOwnership:
         # `token` and no `token_hash`, and the user carried `users.email` and no
         # sidecar; under the core#939 N+1 mutation both lookups miss, the assertion
         # below passes on the *first* reason, and nothing goes red. Measured.
-        assert stale.token is None
+        assert "token" not in type(stale).__table__.columns
         assert inv.get_invitation_by_token(db_session, stale_token) is not None
         assert UserService(auth).get_user_by_email(db_session, "invitee@roles.test") is not None
 

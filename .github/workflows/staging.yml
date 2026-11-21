@@ -134,28 +134,55 @@ jobs:
         # failure -- it disappears, and a skipped gate reads like a pass at a glance. One bad
         # deploy therefore costs a whole night of staging coverage.
         #
-        # Clear the stale per-service state and retry once. Deliberately NOT --remove-orphans:
-        # app_b is a profile service, so compose can classify it as an orphan while the profile
-        # is inactive and delete the staging green colour along with the stale reference.
+        # Clear the stale per-service state and retry once. The app colours are not in either
+        # `up -d` line and are not removed here: naming `app` is what recreated the serving
+        # container and dropped in-flight /_event sessions (core#596). The next step swaps
+        # them. Deliberately NOT --remove-orphans: this `up` does not enable the bluegreen
+        # profile, so compose would classify app_b as an orphan and delete the colour the
+        # swap is about to use.
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'bash -s' <<'STAGING'
           set -e
           cd /opt/datanika-staging
           set -a && . ./.env.docker && set +a
-          if docker compose -p datanika-staging up -d postgres redis app celery beat scheduler celery-exporter; then
-            echo "staging stack up"
+          if docker compose -p datanika-staging up -d postgres redis celery beat scheduler celery-exporter; then
+            echo "staging datastores and workers up"
           else
-            echo "compose up failed - clearing the whole project's containers, retrying once"
+            echo "compose up failed - clearing non-app containers, retrying once"
             # By PROJECT LABEL, not service name: a container docker renamed to <id>_<name>
             # after a failed removal is no longer recognised by compose as that service, so
-            # `rm -sf app celery` walks straight past the very container blocking the name.
+            # `rm -sf celery` walks straight past the very container blocking the name.
+            # The app colours stay. Removing them is the outage the swap exists to avoid.
             # Named volumes are untouched by `docker rm`, so staging data survives.
             docker ps -aq --filter 'label=com.docker.compose.project=datanika-staging' \
-              | xargs -r docker rm -f || true
-            docker compose -p datanika-staging up -d --force-recreate postgres redis app celery beat scheduler celery-exporter
-            echo "staging stack up after recovery"
+              | while read -r id; do
+                  [ -n "$id" ] || continue
+                  svc=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$id" || echo unknown)
+                  case "$svc" in
+                    app|app_b) echo "keeping ${svc} ${id}" ;;
+                    *) docker rm -f "$id" || true ;;
+                  esac
+                done
+            docker compose -p datanika-staging up -d --force-recreate postgres redis celery beat scheduler celery-exporter
+            echo "staging datastores and workers up after recovery"
           fi
           STAGING
+
+      - name: Swap staging app without dropping the live colour
+        # core#596. `scripts/deploy-bluegreen.sh --env staging` starts the inactive
+        # colour (app on 8100/3100, app_b on 8110/3110), waits until it is healthy,
+        # rewrites only datanika-staging-active.conf, and stops the old colour after
+        # the proxy check passes. The live include already exists on the box; this
+        # step does not install a Define example over it, and it does not call
+        # sync-vhosts.sh (that script also writes the production vhost).
+        #
+        # No concurrency group here. The caller in ci.yml already holds
+        # staging-deploy for this whole workflow, which is deploy-staging plus
+        # smoke-staging and e2e-staging. A group on this job would deadlock on
+        # the caller (core#975).
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'bash /opt/datanika-staging-src/datanika/scripts/deploy-bluegreen.sh --env staging'
 
       - name: Wait for staging health
         run: |

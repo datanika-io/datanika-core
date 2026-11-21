@@ -245,8 +245,10 @@ log "direct /healthz on :${T_BE} = 200"
 # `datanika_mcp` failed to import, /mcp was never mounted, and the assertion that caught
 # it fired one step too late to matter.
 #
-# Prod-only, mirroring the post-swap block: staging is not wired to this script (#596),
-# so the expectations below have never been exercised there.
+# Prod-only, mirroring the post-swap block. Staging calls this script (core#596) for
+# the colour swap and the local Host-header checks above. These MCP and OAuth
+# expectations were written against the public prod vhost and are not asserted here:
+# staging is behind Cloudflare Access, and a new public probe would fail the swap.
 if [ "$ENVIRONMENT" = prod ]; then
   BE_MCP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "http://127.0.0.1:${T_BE}/mcp" \
            -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \

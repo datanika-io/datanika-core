@@ -196,14 +196,13 @@ CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 # worse: `postgres-exporter`, `cadvisor`, `node-exporter` and `celery-exporter` are all
 # profile-gated on PROD and requiring them is precisely the core#616 fix. Exempting
 # profiles wholesale would undo it.
-STAGING_NOT_DEPLOYED = {
-    "app_b": (
-        "core#596 decided against blue/green on staging, so the green colour is scaffolding "
-        "the deploy must never start. It is kept in the manifest because the recreate step "
-        "relies on it existing to justify NOT passing --remove-orphans: with the bluegreen "
-        "profile inactive, compose would classify app_b as an orphan and delete it."
-    ),
-}
+#
+# Empty on purpose. `app` and `app_b` are started by `deploy-bluegreen.sh --env staging`
+# (core#596). The fixture counts that colour pair only when deploy-staging actually
+# invokes the script — counting the table without the call would stay green for a swap
+# nothing runs. `app_b` remains profile-gated so a plain `up -d` does not start it, and
+# the recreate step still must not pass `--remove-orphans`.
+STAGING_NOT_DEPLOYED: dict[str, str] = {}
 
 
 @pytest.fixture(scope="module")
@@ -214,11 +213,11 @@ def staging_compose_services() -> set[str]:
 
 @pytest.fixture(scope="module")
 def staging_deployed_services() -> set[str]:
-    """Parsed from whichever workflow defines `deploy-staging`, both `up -d` lines.
+    """Parsed from the run steps of whichever workflow defines `deploy-staging`.
 
-    Deliberately the whole workflow rather than a line range: the recovery path is a
-    second `up -d` with `--force-recreate`, and core#762 landed with the exporter missing
-    from exactly one of the two.
+    Both `up -d` lines live in those steps: the recovery path is a second `up -d`
+    with `--force-recreate`, and core#762 landed with the exporter missing from
+    exactly one of the two. Comments outside the run steps are not commands.
 
     ⚠️ And deliberately **resolved**, not a path constant (core#975). This fixture read
     `ci.yml` by name; the day `deploy-staging` moved into `staging.yml` it silently began
@@ -229,8 +228,19 @@ def staging_deployed_services() -> set[str]:
     """
     from tests.test_deploy._workflows import job
 
-    _name, text, _block = job("deploy-staging")
-    return _services_named_in(text)
+    _name, _text, block = job("deploy-staging")
+    runs = "\n".join(
+        step.get("run", "")
+        for step in (block.get("steps") or [])
+        if isinstance(step.get("run"), str)
+    )
+    named = _services_named_in(runs)
+    # `up -d "$T_SVC"` hides the colour name. Union the script's colour table only
+    # when this job invokes the staging swap. An unconditional union stays green
+    # the day the call is deleted.
+    if "deploy-bluegreen.sh --env staging" in runs:
+        named |= _bluegreen_services()
+    return named
 
 
 def test_the_staging_parsers_actually_found_something(
@@ -257,6 +267,76 @@ def test_staging_deploy_covers_every_staging_compose_service(
         "staging deploy step:\n" + "".join(f"    {s}\n" for s in orphans) + "\n"
         "They will never start, and nothing will fail — the file on disk simply describes "
         "a container that does not exist (core#762). Add them to BOTH `up -d` lines in "
-        "ci.yml (the primary and the --force-recreate recovery), or record the reason in "
+        "the deploy-staging job (the primary and the --force-recreate recovery), point "
+        "that job at deploy-bluegreen.sh --env staging, or record the reason in "
         "STAGING_NOT_DEPLOYED."
     )
+
+
+def _deploy_staging_runs() -> str:
+    from tests.test_deploy._workflows import job
+
+    _name, _text, block = job("deploy-staging")
+    return "\n".join(
+        step.get("run", "")
+        for step in (block.get("steps") or [])
+        if isinstance(step.get("run"), str)
+    )
+
+
+def _staging_up_lines(runs: str) -> list[str]:
+    return [
+        line
+        for line in runs.splitlines()
+        if "compose" in line and re.search(r"\bup\b", line) and "-d" in line
+    ]
+
+
+def test_deploy_staging_swaps_instead_of_recreating_the_app():
+    """core#596: the serving app is swapped, and recovery does not delete it.
+
+    The concurrency group is not re-asserted here. `test_staging_concurrency.py`
+    already requires one caller to hold `staging-deploy` across the called
+    workflow, which is deploy-staging, smoke-staging and e2e-staging.
+    """
+    runs = _deploy_staging_runs()
+    assert "deploy-bluegreen.sh --env staging" in runs
+    assert "deploy-bluegreen.sh --env prod" not in runs
+    assert "sync-vhosts.sh" not in runs
+    assert "xargs -r docker rm -f" not in runs
+    assert 'case "$svc" in' in runs
+    assert "app|app_b)" in runs
+
+    lines = _staging_up_lines(runs)
+    assert len(lines) == 2, lines
+    named = [_services_named_in(line) for line in lines]
+    assert named[0] == named[1], named
+    assert "app" not in named[0]
+    assert "app_b" not in named[0]
+    assert {"postgres", "redis", "celery", "beat", "scheduler", "celery-exporter"} <= named[0]
+
+
+def test_the_swap_guard_rejects_an_in_place_recreate():
+    """The predicates above must fail on the shape this change removes.
+
+    A guard that only matches the new text stays green if both the old recreate
+    and the new swap are deleted together.
+    """
+    runs = (
+        "if docker compose -p datanika-staging up -d postgres redis app celery "
+        "beat scheduler celery-exporter; then\n"
+        "echo up\n"
+        "else\n"
+        "docker ps -aq --filter 'label=com.docker.compose.project=datanika-staging' "
+        "| xargs -r docker rm -f || true\n"
+        "docker compose -p datanika-staging up -d --force-recreate postgres redis app "
+        "celery beat scheduler celery-exporter\n"
+        "fi\n"
+    )
+    lines = _staging_up_lines(runs)
+    named = [_services_named_in(line) for line in lines]
+    assert len(lines) == 2, lines
+    assert named[0] == named[1]
+    assert "app" in named[0]
+    assert "deploy-bluegreen.sh --env staging" not in runs
+    assert "xargs -r docker rm -f" in runs

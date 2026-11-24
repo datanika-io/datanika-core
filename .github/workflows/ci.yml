@@ -56,9 +56,33 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      # The repository default is contents and packages read, so the reuse lookup
+      # 403s unless this job says otherwise. `actions: write` is the cache save
+      # setup-uv already does: a permissions block that only reads drops it.
+      contents: read
+      packages: read
+      actions: write
+      checks: read
     steps:
       - uses: actions/checkout@v6
 
+      - name: Decide whether this job already has a completed success
+        id: reuse
+        env:
+          REUSE_EVENT: ${{ github.event_name }}
+          REUSE_JOB: lint
+          REUSE_NEEDS_EXTRA: "0"
+          REUSE_EXTRA: "-"
+          REUSE_REPO: ${{ github.repository }}
+          REUSE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The tree is computed here so ci_reuse.py does not shell out.
+          # A missing extra input misses; it does not skip the job.
+          REUSE_TREE=$(git rev-parse 'HEAD^{tree}')
+          export REUSE_TREE
+          python3 .github/scripts/ci_reuse.py
       - uses: astral-sh/setup-uv@v8.0.0
         with:
           version: "latest"
@@ -74,6 +98,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: |
           # Install the LOCKED tree, not a fresh resolution: prod builds
           # from uv.lock via `uv sync --frozen`, and CI green means nothing
@@ -124,9 +149,11 @@ jobs:
       # tests/test_deploy/test_lint_gates_name_every_python_directory.py -- the inverse of the
       # file named above, which only asks whether what is named resolves to real files.
       - name: Ruff check
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: ruff check datanika tests scripts e2e/scripts .github/scripts rxconfig.py
 
       - name: Ruff format check
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: ruff format --check datanika tests scripts e2e/scripts .github/scripts rxconfig.py
 
       # core#1288. A step inside `lint`, NOT a separate `typecheck` job, and the reason is a
@@ -167,6 +194,7 @@ jobs:
       # with nothing. Shell, so it is outside the pytest suite; gated here because a guard
       # nobody has watched fail is not evidence.
       - name: Staging SHA attribution controls
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: bash scripts/test-staging-sha-stamp.sh
 
       # core#1178. Twenty-three controls over the tree reconciler, the only mechanism
@@ -177,10 +205,21 @@ jobs:
       # gated here because a guard nobody has watched fail is not evidence, and this
       # guard's failure mode is deleting production.
       - name: Deployed-tree reconciler controls
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: bash scripts/test-reconcile-deployed-tree.sh
 
+      - name: Record the CI reuse key
+        if: success() && steps.reuse.outputs.key != ''
+        run: echo "::notice title=ci-reuse-key::${{ steps.reuse.outputs.key }}"
   test:
     runs-on: ubuntu-latest
+    permissions:
+      # Same reason as `lint`: the lookup needs Actions and Checks, and the uv
+      # cache save needs `actions: write` once a permissions block exists.
+      contents: read
+      packages: read
+      actions: write
+      checks: read
     # core#841. This job runs `pytest tests/`, which collects every file in
     # tests/test_migrations/ — and the `roundtrip_db_url` fixture there needs a real
     # Postgres. With no service container and no DATABASE_URL_SYNC_TEST it fell through
@@ -216,7 +255,37 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Fetch the deployed release
+        id: deployed
+        # This job runs the whole suite, which includes the t1-window guard
+        # (core#449). That guard compares against what production runs, and
+        # actions/checkout gives a shallow PR-only tree with no origin/master —
+        # so without this the guard fails rather than silently comparing
+        # nothing. Deliberately not --ignore'd here: `pytest tests/` must mean
+        # the same thing in CI as it does locally (core#470).
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin master
+          echo "sha=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether this job already has a completed success
+        id: reuse
+        env:
+          REUSE_EVENT: ${{ github.event_name }}
+          REUSE_JOB: test
+          REUSE_NEEDS_EXTRA: "1"
+          REUSE_EXTRA: "${{ steps.deployed.outputs.sha }}"
+          REUSE_REPO: ${{ github.repository }}
+          REUSE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The tree is computed here so ci_reuse.py does not shell out.
+          # A missing extra input misses; it does not skip the job.
+          REUSE_TREE=$(git rev-parse 'HEAD^{tree}')
+          export REUSE_TREE
+          python3 .github/scripts/ci_reuse.py
       - uses: astral-sh/setup-uv@v8.0.0
+        if: success() && steps.reuse.outputs.hit != 'true'
         with:
           version: "latest"
           # #475 made CI build lxml/xmlsec from source so it tests what ships, at a cost
@@ -227,10 +296,12 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - uses: actions/setup-python@v6
+        if: success() && steps.reuse.outputs.hit != 'true'
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: |
           # Install the LOCKED tree, not a fresh resolution: prod builds
           # from uv.lock via `uv sync --frozen`, and CI green means nothing
@@ -255,16 +326,8 @@ jobs:
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
           uv pip install --system -e . --no-deps
 
-      - name: Fetch the deployed release
-        # This job runs the whole suite, which includes the t1-window guard
-        # (core#449). That guard compares against what production runs, and
-        # actions/checkout gives a shallow PR-only tree with no origin/master —
-        # so without this the guard fails rather than silently comparing
-        # nothing. Deliberately not --ignore'd here: `pytest tests/` must mean
-        # the same thing in CI as it does locally (core#470).
-        run: git fetch --no-tags --depth=1 origin master
-
       - name: Run tests
+        if: success() && steps.reuse.outputs.hit != 'true'
         # core#841: point the migration fixtures at the service container above. Without
         # this the env branch of `roundtrip_db_url` is not taken and the fixture falls
         # through to testcontainers even though a healthy Postgres is sitting right there.
@@ -272,6 +335,9 @@ jobs:
           DATABASE_URL_SYNC_TEST: postgresql://test:test@localhost:5432/test
         run: pytest tests/ --tb=short -q
 
+      - name: Record the CI reuse key
+        if: success() && steps.reuse.outputs.key != ''
+        run: echo "::notice title=ci-reuse-key::${{ steps.reuse.outputs.key }}"
   # Alembic migration round-trip test (PLAN_QA.md P1). Spins up a blank
   # Postgres, runs `upgrade head → downgrade -1 → upgrade head`, asserts
   # the schema round-trips cleanly. Catches migrations whose downgrade()
@@ -283,6 +349,11 @@ jobs:
   # job needs origin/master fetched rather than a shallow PR-only checkout.
   migration-roundtrip:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+      checks: read
     services:
       postgres:
         image: postgres:16-alpine
@@ -300,7 +371,33 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Fetch the deployed release
+        id: deployed
+        # The t1 guard compares against what production runs, so master must be
+        # present. actions/checkout gives a shallow PR-only tree by default.
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin master
+          echo "sha=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether this job already has a completed success
+        id: reuse
+        env:
+          REUSE_EVENT: ${{ github.event_name }}
+          REUSE_JOB: migration-roundtrip
+          REUSE_NEEDS_EXTRA: "1"
+          REUSE_EXTRA: "${{ steps.deployed.outputs.sha }}"
+          REUSE_REPO: ${{ github.repository }}
+          REUSE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The tree is computed here so ci_reuse.py does not shell out.
+          # A missing extra input misses; it does not skip the job.
+          REUSE_TREE=$(git rev-parse 'HEAD^{tree}')
+          export REUSE_TREE
+          python3 .github/scripts/ci_reuse.py
       - uses: astral-sh/setup-uv@v8.0.0
+        if: success() && steps.reuse.outputs.hit != 'true'
         with:
           version: "latest"
           # #475 made CI build lxml/xmlsec from source so it tests what ships, at a cost
@@ -311,10 +408,12 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - uses: actions/setup-python@v6
+        if: success() && steps.reuse.outputs.hit != 'true'
         with:
           python-version: "3.12"
 
       - name: Install dependencies
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: |
           # Install the LOCKED tree, not a fresh resolution: prod builds
           # from uv.lock via `uv sync --frozen`, and CI green means nothing
@@ -339,12 +438,8 @@ jobs:
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
           uv pip install --system -e . --no-deps
 
-      - name: Fetch the deployed release
-        # The t1 guard compares against what production runs, so master must be
-        # present. actions/checkout gives a shallow PR-only tree by default.
-        run: git fetch --no-tags --depth=1 origin master
-
       - name: Run round-trip + t1-window tests
+        if: success() && steps.reuse.outputs.hit != 'true'
         env:
           DATABASE_URL_SYNC_TEST: postgresql://test:test@localhost:5432/test
         run: |
@@ -366,21 +461,51 @@ jobs:
                  tests/test_migrations/test_n0_audit_jsonb_blue_green.py \
                  tests/test_migrations/test_expand_contract.py -v --tb=long
 
+      - name: Record the CI reuse key
+        if: success() && steps.reuse.outputs.key != ''
+        run: echo "::notice title=ci-reuse-key::${{ steps.reuse.outputs.key }}"
   helm-lint:
     runs-on: ubuntu-latest
+    permissions:
+      # No uv cache in this job, so read is enough for the reuse lookup.
+      contents: read
+      actions: read
+      checks: read
     steps:
       - uses: actions/checkout@v6
 
+      - name: Decide whether this job already has a completed success
+        id: reuse
+        env:
+          REUSE_EVENT: ${{ github.event_name }}
+          REUSE_JOB: helm-lint
+          REUSE_NEEDS_EXTRA: "0"
+          REUSE_EXTRA: "-"
+          REUSE_REPO: ${{ github.repository }}
+          REUSE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The tree is computed here so ci_reuse.py does not shell out.
+          # A missing extra input misses; it does not skip the job.
+          REUSE_TREE=$(git rev-parse 'HEAD^{tree}')
+          export REUSE_TREE
+          python3 .github/scripts/ci_reuse.py
       - uses: azure/setup-helm@v5
+        if: success() && steps.reuse.outputs.hit != 'true'
         with:
           version: v3.17.3
 
       - name: Helm lint
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: helm lint deploy/helm/datanika
 
       - name: Helm template (dry-run render)
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: helm template test-release deploy/helm/datanika > /dev/null
 
+      - name: Record the CI reuse key
+        if: success() && steps.reuse.outputs.key != ''
+        run: echo "::notice title=ci-reuse-key::${{ steps.reuse.outputs.key }}"
   # ===========================================================================
   # image-probe — GATING. Red here holds the merge. (core#602, QA)
   # ===========================================================================
@@ -445,6 +570,13 @@ jobs:
     name: image-probe
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      # `actions: write` keeps the uv cache and the gha build cache this job
+      # already reads and writes. The lookup itself only needs read.
+      contents: read
+      packages: read
+      actions: write
+      checks: read
     steps:
       - name: Checkout core (this repo)
         uses: actions/checkout@v6
@@ -482,8 +614,49 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: bash .github/scripts/resolve-cloud-ref.sh
 
-      - name: Checkout cloud (private)
+      - name: Read the cloud commit this job would check out
+        id: cloudsha
         if: steps.token.outputs.available == 'true'
+        env:
+          CLOUD_REPO_TOKEN: ${{ secrets.CLOUD_REPO_TOKEN }}
+          CLOUD_REF: ${{ steps.cloudref.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # No `set -x`: the token is in the git extraheader.
+          line="$(
+            GIT_TERMINAL_PROMPT=0 \
+              git -c "http.extraheader=AUTHORIZATION: bearer ${CLOUD_REPO_TOKEN}" \
+              ls-remote --heads \
+              https://github.com/datanika-io/datanika-cloud.git \
+              "refs/heads/${CLOUD_REF}" || true
+          )"
+          sha="${line%%$'\t'*}"
+          sha="${sha%%$'\n'*}"
+          if printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=" >> "$GITHUB_OUTPUT"
+            echo "::warning::cloud commit for ${CLOUD_REF} did not resolve; this job runs its real steps."
+          fi
+      - name: Decide whether this job already has a completed success
+        id: reuse
+        working-directory: core
+        env:
+          REUSE_EVENT: ${{ github.event_name }}
+          REUSE_JOB: image-probe
+          REUSE_NEEDS_EXTRA: "1"
+          REUSE_EXTRA: "${{ steps.cloudsha.outputs.sha }}"
+          REUSE_REPO: ${{ github.repository }}
+          REUSE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The tree is computed here so ci_reuse.py does not shell out.
+          # A missing extra input misses; it does not skip the job.
+          REUSE_TREE=$(git rev-parse 'HEAD^{tree}')
+          export REUSE_TREE
+          python3 .github/scripts/ci_reuse.py
+      - name: Checkout cloud (private)
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         uses: actions/checkout@v6
         with:
           repository: datanika-io/datanika-cloud
@@ -493,8 +666,12 @@ jobs:
           token: ${{ secrets.CLOUD_REPO_TOKEN }}
           path: cloud
 
+      - name: Read the cloud commit that was checked out
+        id: cloudhead
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
+        run: echo "sha=$(git -C cloud rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Reshape build context
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         run: |
           # The Dockerfile assumes the monorepo layout with datanika/ and
           # datanika-cloud/ at the root — same reshape as build-push-image.yml.
@@ -503,14 +680,14 @@ jobs:
           mv cloud build-context/datanika-cloud
 
       - uses: astral-sh/setup-uv@v8.0.0
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         with:
           version: "latest"
           enable-cache: true
           cache-dependency-glob: "core/uv.lock"
 
       - name: Export the locked pins
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         working-directory: core
         run: |
           # The comparison basis for check C. --no-dev because the image is built
@@ -520,10 +697,10 @@ jobs:
           echo "exported $(grep -c '==' ../lock-pins.txt) pins"
 
       - uses: docker/setup-buildx-action@v3
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
 
       - name: Build the production image
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         uses: docker/build-push-action@v6
         with:
           context: build-context
@@ -547,7 +724,7 @@ jobs:
       # comment above claiming otherwise, which is the #602 failure mode itself.
       - name: Probe the built image
         id: probe
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         run: |
           # `python3`, not `python`: this job deliberately does NOT run
           # actions/setup-python, so bare `python` may not exist on the runner.
@@ -571,7 +748,7 @@ jobs:
       # and demands the same call FAIL. If both pass, this step reports nothing and says
       # so loudly rather than banking the green.
       - name: Assert the image needs no CDN to initialise (core#1498)
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         run: |
           set -uo pipefail
           CALL='from reflex.utils.js_runtimes import install_bun; install_bun()'
@@ -604,7 +781,7 @@ jobs:
       # belongs solely to `e2e-staging`'s informational tier. Two jobs emitting
       # one marker is what produced a blended verdict across two jobs.
       - name: Record the probe result
-        if: always()
+        if: always() && steps.reuse.outputs.hit != 'true'
         run: |
           # `outcome` is the step's real result. With continue-on-error gone,
           # `conclusion` now agrees with it — but read `outcome` regardless, so
@@ -634,6 +811,17 @@ jobs:
           esac
 
 
+      - name: Record the CI reuse key
+        if: success() && steps.reuse.outputs.key != ''
+        run: |
+          key="${{ steps.reuse.outputs.key }}"
+          built="${{ steps.cloudhead.outputs.sha }}"
+          if [ -n "${built}" ]; then
+            tree="${key#v1 tree=}"
+            tree="${tree%% extra=*}"
+            key="v1 tree=${tree} extra=${built}"
+          fi
+          echo "::notice title=ci-reuse-key::${key}"
   # ===========================================================================
   # core-only-image — NOT required. (core#1014)
   # ===========================================================================
@@ -700,13 +888,36 @@ jobs:
     name: core-only-image
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+      checks: read
     steps:
       - name: Checkout core (this repo)
         uses: actions/checkout@v6
         with:
           path: core
 
+      - name: Decide whether this job already has a completed success
+        id: reuse
+        working-directory: core
+        env:
+          REUSE_EVENT: ${{ github.event_name }}
+          REUSE_JOB: core-only-image
+          REUSE_NEEDS_EXTRA: "0"
+          REUSE_EXTRA: "-"
+          REUSE_REPO: ${{ github.repository }}
+          REUSE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The tree is computed here so ci_reuse.py does not shell out.
+          # A missing extra input misses; it does not skip the job.
+          REUSE_TREE=$(git rev-parse 'HEAD^{tree}')
+          export REUSE_TREE
+          python3 .github/scripts/ci_reuse.py
       - name: Reshape build context (core only — no cloud checkout, on purpose)
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: |
           # Same layout the Dockerfile assumes, minus datanika-cloud/. `cp -r`
           # rather than `mv` to match image-probe, which keeps `core/` in place
@@ -720,12 +931,14 @@ jobs:
           fi
 
       - uses: astral-sh/setup-uv@v8.0.0
+        if: success() && steps.reuse.outputs.hit != 'true'
         with:
           version: "latest"
           enable-cache: true
           cache-dependency-glob: "core/uv.lock"
 
       - name: Export the locked pins
+        if: success() && steps.reuse.outputs.hit != 'true'
         working-directory: core
         run: |
           # --no-dev because the image builds --no-dev; the comparison basis has
@@ -735,8 +948,10 @@ jobs:
           echo "exported $(grep -c '==' ../lock-pins.txt) pins"
 
       - uses: docker/setup-buildx-action@v3
+        if: success() && steps.reuse.outputs.hit != 'true'
 
       - name: Build the core-only image
+        if: success() && steps.reuse.outputs.hit != 'true'
         uses: docker/build-push-action@v6
         with:
           context: build-context
@@ -757,6 +972,7 @@ jobs:
           platforms: linux/amd64
 
       - name: Probe the core-only image
+        if: success() && steps.reuse.outputs.hit != 'true'
         id: probe
         run: |
           python3 core/scripts/probe_built_image.py \
@@ -765,7 +981,7 @@ jobs:
             --lock-pins lock-pins.txt
 
       - name: Record the result
-        if: always()
+        if: always() && steps.reuse.outputs.hit != 'true'
         run: |
           # Read `outcome`, not `conclusion`: they agree today because there is no
           # continue-on-error, and this line keeps meaning the same thing if one
@@ -787,6 +1003,9 @@ jobs:
               ;;
           esac
 
+      - name: Record the CI reuse key
+        if: success() && steps.reuse.outputs.key != ''
+        run: echo "::notice title=ci-reuse-key::${{ steps.reuse.outputs.key }}"
   # ---------------------------------------------------------------------------
   # image-cve — trivy scan of the BUILT IMAGE (#723, placement resolved with #728)
   #
@@ -840,6 +1059,11 @@ jobs:
   # this job reports and nothing more. Making it required is Infra's.
   cloud-suite:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      actions: write
+      checks: read
     steps:
       - name: Checkout core (this repo)
         uses: actions/checkout@v6
@@ -874,8 +1098,50 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: bash .github/scripts/resolve-cloud-ref.sh
 
-      - name: Checkout cloud
+      - name: Read the cloud commit this job would check out
+        id: cloudsha
         if: steps.token.outputs.available == 'true'
+        env:
+          CLOUD_REPO_TOKEN: ${{ secrets.CLOUD_REPO_TOKEN }}
+          CLOUD_REF: ${{ steps.cloudref.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # No `set -x`: the token is in the git extraheader.
+          line="$(
+            GIT_TERMINAL_PROMPT=0 \
+              git -c "http.extraheader=AUTHORIZATION: bearer ${CLOUD_REPO_TOKEN}" \
+              ls-remote --heads \
+              https://github.com/datanika-io/datanika-cloud.git \
+              "refs/heads/${CLOUD_REF}" || true
+          )"
+          sha="${line%%$'\t'*}"
+          sha="${sha%%$'\n'*}"
+          if printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=" >> "$GITHUB_OUTPUT"
+            echo "::warning::cloud commit for ${CLOUD_REF} did not resolve; this job runs its real steps."
+          fi
+      - name: Decide whether this job already has a completed success
+        id: reuse
+        if: steps.token.outputs.available == 'true'
+        working-directory: core
+        env:
+          REUSE_EVENT: ${{ github.event_name }}
+          REUSE_JOB: cloud-suite
+          REUSE_NEEDS_EXTRA: "1"
+          REUSE_EXTRA: "${{ steps.cloudsha.outputs.sha }}"
+          REUSE_REPO: ${{ github.repository }}
+          REUSE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The tree is computed here so ci_reuse.py does not shell out.
+          # A missing extra input misses; it does not skip the job.
+          REUSE_TREE=$(git rev-parse 'HEAD^{tree}')
+          export REUSE_TREE
+          python3 .github/scripts/ci_reuse.py
+      - name: Checkout cloud
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         uses: actions/checkout@v6
         with:
           repository: datanika-io/datanika-cloud
@@ -883,20 +1149,24 @@ jobs:
           token: ${{ secrets.CLOUD_REPO_TOKEN }}
           path: cloud
 
+      - name: Read the cloud commit that was checked out
+        id: cloudhead
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
+        run: echo "sha=$(git -C cloud rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@v8.0.0
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         with:
           version: "latest"
           enable-cache: true
           cache-dependency-glob: "core/uv.lock"
 
       - uses: actions/setup-python@v6
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         with:
           python-version: "3.12"
 
       - name: Install THIS core, then cloud on top of it
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         run: |
           sudo apt-get update
           # ubuntu-latest is 26.04 and libxmlsec1-openssl has no candidate
@@ -926,7 +1196,7 @@ jobs:
           uv pip install --system -e ./cloud --no-deps
 
       - name: Run cloud's suite against this core
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         env:
           # 771 collect today (762 pass, 9 skip). The floor sits well under, so ordinary
           # growth and deletion do not trip it while a wrong path or a broken import does.
@@ -958,12 +1228,27 @@ jobs:
           fi
           pytest cloud/tests --tb=short -q
 
+      - name: Record the CI reuse key
+        if: success() && steps.token.outputs.available == 'true' && steps.reuse.outputs.key != ''
+        run: |
+          key="${{ steps.reuse.outputs.key }}"
+          built="${{ steps.cloudhead.outputs.sha }}"
+          if [ -n "${built}" ]; then
+            tree="${key#v1 tree=}"
+            tree="${tree%% extra=*}"
+            key="v1 tree=${tree} extra=${built}"
+          fi
+          echo "::notice title=ci-reuse-key::${key}"
   image-cve:
     name: image-cve
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
+      # The reuse lookup reads Actions run metadata and check annotations.
+      # These two reads do not grant `security-events: write`.
+      actions: read
+      checks: read
       # Deliberately NO `security-events: write`. Uploading SARIF would start
       # creating code-scanning alerts on a repo that has none today; do that as
       # a separate, deliberate change once the baseline volume is known.
@@ -1034,8 +1319,49 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: bash .github/scripts/resolve-cloud-ref.sh
 
-      - name: Checkout cloud (private)
+      - name: Read the cloud commit this job would check out
+        id: cloudsha
         if: steps.token.outputs.available == 'true'
+        env:
+          CLOUD_REPO_TOKEN: ${{ secrets.CLOUD_REPO_TOKEN }}
+          CLOUD_REF: ${{ steps.cloudref.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # No `set -x`: the token is in the git extraheader.
+          line="$(
+            GIT_TERMINAL_PROMPT=0 \
+              git -c "http.extraheader=AUTHORIZATION: bearer ${CLOUD_REPO_TOKEN}" \
+              ls-remote --heads \
+              https://github.com/datanika-io/datanika-cloud.git \
+              "refs/heads/${CLOUD_REF}" || true
+          )"
+          sha="${line%%$'\t'*}"
+          sha="${sha%%$'\n'*}"
+          if printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=" >> "$GITHUB_OUTPUT"
+            echo "::warning::cloud commit for ${CLOUD_REF} did not resolve; this job runs its real steps."
+          fi
+      - name: Decide whether this job already has a completed success
+        id: reuse
+        working-directory: core
+        env:
+          REUSE_EVENT: ${{ github.event_name }}
+          REUSE_JOB: image-cve
+          REUSE_NEEDS_EXTRA: "1"
+          REUSE_EXTRA: "${{ steps.cloudsha.outputs.sha }}"
+          REUSE_REPO: ${{ github.repository }}
+          REUSE_RUN_ID: ${{ github.run_id }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The tree is computed here so ci_reuse.py does not shell out.
+          # A missing extra input misses; it does not skip the job.
+          REUSE_TREE=$(git rev-parse 'HEAD^{tree}')
+          export REUSE_TREE
+          python3 .github/scripts/ci_reuse.py
+      - name: Checkout cloud (private)
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         uses: actions/checkout@v6
         with:
           repository: datanika-io/datanika-cloud
@@ -1047,8 +1373,12 @@ jobs:
           token: ${{ secrets.CLOUD_REPO_TOKEN }}
           path: cloud
 
+      - name: Read the cloud commit that was checked out
+        id: cloudhead
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
+        run: echo "sha=$(git -C cloud rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Reshape build context
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         run: |
           # The Dockerfile assumes the monorepo layout with datanika/ and
           # datanika-cloud/ at the root — same reshape as image-probe.
@@ -1057,10 +1387,10 @@ jobs:
           mv cloud build-context/datanika-cloud
 
       - uses: docker/setup-buildx-action@v3
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
 
       - name: Build the production image
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         uses: docker/build-push-action@v6
         with:
           context: build-context
@@ -1096,7 +1426,7 @@ jobs:
       # fixed or dropped from the DB.
       - name: Canary — prove the scanner can actually fail
         id: canary
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         env:
@@ -1114,7 +1444,7 @@ jobs:
           exit-code: "1"
 
       - name: Assert the canary went red
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         run: |
           # `outcome` is the step's real result even though continue-on-error
           # forced `conclusion` to success.
@@ -1126,7 +1456,7 @@ jobs:
 
       # ── The actual gate ─────────────────────────────────────────────────────
       - name: Scan the built image
-        if: steps.token.outputs.available == 'true'
+        if: steps.token.outputs.available == 'true' && steps.reuse.outputs.hit != 'true'
         uses: aquasecurity/trivy-action@v0.36.0
         env:
           TRIVY_USERNAME: ${{ github.actor }}
@@ -1160,7 +1490,7 @@ jobs:
           trivyignores: core/.trivyignore.yaml
 
       - name: Record what this job actually evaluated
-        if: always()
+        if: always() && steps.reuse.outputs.hit != 'true'
         run: |
           if [ "${{ steps.token.outputs.available }}" != "true" ]; then
             echo "::warning::image-cve NOT EVALUATED — no image was built (fork PR). This green proves nothing."
@@ -1168,6 +1498,17 @@ jobs:
             echo "::notice::image-cve scanned the built artifact (CRITICAL+HIGH, fixed-only); canary confirmed the scanner armed."
           fi
 
+      - name: Record the CI reuse key
+        if: success() && steps.reuse.outputs.key != ''
+        run: |
+          key="${{ steps.reuse.outputs.key }}"
+          built="${{ steps.cloudhead.outputs.sha }}"
+          if [ -n "${built}" ]; then
+            tree="${key#v1 tree=}"
+            tree="${tree%% extra=*}"
+            key="v1 tree=${tree} extra=${built}"
+          fi
+          echo "::notice title=ci-reuse-key::${key}"
   # Prod deploy is handled by .github/workflows/deploy-pointer.yml (build-from-source
   # to pointer.gr on push:master). The old GHCR-pull-to-Hetzner deploy job was
   # removed 2026-07-17 — the Hetzner box is gone and GHCR is inaccessible from the box.

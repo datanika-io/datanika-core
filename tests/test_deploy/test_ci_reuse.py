@@ -12,14 +12,16 @@ success — a job-level ``if`` would skip ``staging``, which needs ``lint``, ``t
 and ``helm-lint`` to finish success. ``pull_request`` always runs the real steps,
 because the queue can only enter after those checks exist.
 
-``lint``'s mypy steps stay a bare name and a command (``test_mypy_gate`` allowlist).
-They re-run on the fast path. Masking them to save the minute would make that allowlist
-agree with a type check that did not run.
+``lint``'s two mypy steps carry the same hit guard as ruff. The donor already ran
+mypy against the locked dependencies. Running ``mypy==2.3.1`` alone, after that
+install was skipped, is a false red. A different ``if``, ``continue-on-error``,
+or an early return inside ``run`` is still a mask.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import re
 import urllib.error
 from pathlib import Path
 from typing import Any
@@ -53,11 +55,11 @@ MIGRATION_FILES = (
 )
 
 HIT_GUARD = "steps.reuse.outputs.hit != 'true'"
+RUFF_HIT_IF = f"success() && {HIT_GUARD}"
 
-# core#1288. These two steps are an allowlist of {name, run} in test_mypy_gate.py.
-# A step-level `if` fails that test, and a shell early-return inside `run` would
-# skip the type check while the allowlist stayed green. They re-run instead.
-LINT_FAST_PATH_NAMES = (
+# core#1288. These two steps used to re-run on a reuse hit. That installed
+# mypy==2.3.1 with the locked dependencies skipped, and mypy exited 1.
+MYPY_STEPS = (
     "Install mypy (pinned)",
     "Type check (scripts/ — shape only, never behaviour)",
 )
@@ -108,6 +110,19 @@ def _donor(
     return {"job": job, "key": key, "status": status, "conclusion": conclusion}
 
 
+def _run_returns_early(run: str) -> bool:
+    """A shell line that can succeed without executing the step's command."""
+    for raw in run.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if re.search(r"(?:^|[;&|])\s*(?:exit|return)\b", line):
+            return True
+        if re.search(r"(?:\|\||&&)\s*true\b", line):
+            return True
+    return False
+
+
 def _must_guard(job_name: str, step: dict[str, Any]) -> bool:
     """True when this step is expensive and has to carry the hit guard."""
     if step.get("name") == RECORD_STEP:
@@ -115,8 +130,6 @@ def _must_guard(job_name: str, step: dict[str, Any]) -> bool:
     if job_name == "lint":
         uses = str(step.get("uses") or "")
         if "setup-uv" in uses or "setup-python" in uses:
-            return False
-        if step.get("name") in LINT_FAST_PATH_NAMES:
             return False
     return True
 
@@ -167,6 +180,11 @@ def audit_job(name: str, job: dict[str, Any]) -> list[str]:
         label = candidate.get("name") or candidate.get("uses") or candidate.get("id")
         if HIT_GUARD not in cond:
             errors.append(f"{name}: {label!r} runs on the fast path")
+        if candidate.get("name") in MYPY_STEPS:
+            if cond != RUFF_HIT_IF:
+                errors.append(f"{name}: {label!r} if is {cond!r}, not the ruff hit guard")
+            if _run_returns_early(str(candidate.get("run") or "")):
+                errors.append(f"{name}: {label!r} returns early inside run")
         if candidate.get("continue-on-error") and candidate.get("id") != "canary":
             errors.append(f"{name}: {label!r} has continue-on-error on the fast-path gate")
     notices = [candidate for candidate in steps if candidate.get("name") == RECORD_STEP]
@@ -477,6 +495,72 @@ def test_the_auditor_accepts_the_guarded_shape() -> None:
         ]
     }
     assert audit_job("helm-lint", job) == []
+
+
+def _lint_reuse_job(step: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "steps": [
+            {
+                "id": "reuse",
+                "run": "python3 .github/scripts/ci_reuse.py",
+                "env": {
+                    "REUSE_JOB": "lint",
+                    "REUSE_NEEDS_EXTRA": "0",
+                    "REUSE_EXTRA": "-",
+                },
+            },
+            step,
+            {
+                "name": RECORD_STEP,
+                "if": "success() && steps.reuse.outputs.key != ''",
+                "run": 'echo "::notice title=ci-reuse-key::${KEY}"',
+            },
+        ]
+    }
+
+
+def test_the_auditor_refuses_another_if_or_an_early_return_on_mypy() -> None:
+    """The hit guard is one exact condition. A shorter if, or exit before mypy, is a miss."""
+    install = 'uv pip install --system "mypy==2.3.1"'
+    wrong = audit_job(
+        "lint",
+        _lint_reuse_job({"name": "Install mypy (pinned)", "if": "success()", "run": install}),
+    )
+    assert any("not the ruff hit guard" in error for error in wrong), wrong
+    early = audit_job(
+        "lint",
+        _lint_reuse_job(
+            {
+                "name": "Type check (scripts/ — shape only, never behaviour)",
+                "if": RUFF_HIT_IF,
+                "run": "exit 0\nmypy",
+            }
+        ),
+    )
+    assert any("returns early" in error for error in early), early
+    quarantined = audit_job(
+        "lint",
+        _lint_reuse_job(
+            {
+                "name": "Install mypy (pinned)",
+                "if": RUFF_HIT_IF,
+                "continue-on-error": True,
+                "run": install,
+            }
+        ),
+    )
+    assert any("continue-on-error" in error for error in quarantined), quarantined
+    clean = audit_job(
+        "lint",
+        _lint_reuse_job(
+            {
+                "name": "Type check (scripts/ — shape only, never behaviour)",
+                "if": RUFF_HIT_IF,
+                "run": "mypy",
+            }
+        ),
+    )
+    assert clean == [], clean
 
 
 def test_the_auditor_rejects_a_job_level_if() -> None:

@@ -25,6 +25,7 @@ explicit that a suite must not get quieter on a missing dependency.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -44,9 +45,13 @@ MYPY_CFG: dict[str, Any] = (
 #: Keys a step may carry and still be a gate. Written as an ALLOWLIST, not as a ban on
 #: `continue-on-error`: banning one key is satisfied by `if: false`, by
 #: `continue-on-error: ${{ ... }}`, and by anything invented next — and asserting the absence
-#: of a wrong word is the trap `WORKFLOW_RULES` §4 and `QA_RULES` §7 both name. A step that is
-#: exactly a name and a command cannot be masked by any mechanism, present or future.
-GATE_STEP_KEYS = {"name", "run"}
+#: of a wrong word is the trap `WORKFLOW_RULES` §4 and `QA_RULES` §7 both name.
+#:
+#: `if` is the one extra key, and only because a reuse hit must skip these two steps.
+#: The key allowlist cannot see the value: `if: false` and a different expression are
+#: still masks, so :func:`_gate_defect` requires this exact condition.
+GATE_STEP_KEYS = {"name", "run", "if"}
+REQUIRED_IF = "success() && steps.reuse.outputs.hit != 'true'"
 
 
 def _lint_steps() -> list[dict[str, Any]]:
@@ -61,6 +66,31 @@ def _installs_mypy(run: str) -> bool:
     *"nothing installs mypy"* message — which names the wrong defect.
     """
     return "install" in run and "mypy" in run
+
+
+def _run_returns_early(run: str) -> bool:
+    """A shell line that can succeed without executing the pinned command."""
+    for raw in run.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if re.search(r"(?:^|[;&|])\s*(?:exit|return)\b", line):
+            return True
+        if re.search(r"(?:\|\||&&)\s*true\b", line):
+            return True
+    return False
+
+
+def _gate_defect(step: dict[str, Any]) -> str:
+    """Why this step is not the reuse-gated type check. Empty means it is."""
+    extra = set(step) - GATE_STEP_KEYS
+    if extra:
+        return f"extra keys {sorted(extra)}"
+    if step.get("if") != REQUIRED_IF:
+        return f"if is {step.get('if')!r}, not the reuse hit guard"
+    if _run_returns_early(str(step.get("run") or "")):
+        return "early return inside run"
+    return ""
 
 
 def _steps_running(prefix: str) -> list[dict[str, Any]]:
@@ -161,17 +191,15 @@ def test_the_mypy_version_is_pinned_exactly() -> None:
 def test_neither_mypy_step_can_be_masked() -> None:
     """A tick that `continue-on-error` has quarantined is not a verdict (`QA_RULES` §1).
 
-    Asserted as an allowlist of keys rather than as a ban on that one key — see
-    :data:`GATE_STEP_KEYS` for why the ban form is the weaker assertion.
+    The one extra key is ``if``, and its value is the reuse hit guard the ruff steps
+    use. A missing guard, any other ``if``, ``continue-on-error``, or an early return
+    inside ``run`` is still a mask. See :func:`_gate_defect`.
     """
     for step in _steps_running("mypy") + [
         s for s in _lint_steps() if _installs_mypy(str(s.get("run", "")))
     ]:
-        extra = set(step) - GATE_STEP_KEYS
-        assert not extra, (
-            f"the step {step.get('name')!r} carries {sorted(extra)}. A gate step is exactly a "
-            f"name and a command; anything else can decide the job's colour for it."
-        )
+        defect = _gate_defect(step)
+        assert not defect, f"the step {step.get('name')!r}: {defect}"
 
 
 def test_the_scope_is_declared_in_pyproject_and_excludes_the_app() -> None:
@@ -308,17 +336,26 @@ def test_the_gate_says_out_loud_what_it_cannot_see() -> None:
 def test_control_the_masking_assertion_can_fail() -> None:
     """`QA_RULES` §2: a green you have not forced red is unproven.
 
-    Drives :data:`GATE_STEP_KEYS` with a step that a real edit would plausibly produce, and
-    requires it to be refused. Without this, an allowlist that had silently grown to include
-    everything would score identically on the live workflow.
+    Drives :func:`_gate_defect` with the four masks a real edit would plausibly produce.
+    Without this, an allowlist that had grown to accept any ``if`` would score the same
+    on the live workflow.
     """
-    masked = {"name": "Type check", "run": "mypy", "continue-on-error": True}
+    masked = {
+        "name": "Type check",
+        "run": "mypy",
+        "if": REQUIRED_IF,
+        "continue-on-error": True,
+    }
     assert set(masked) - GATE_STEP_KEYS == {"continue-on-error"}, (
         "GATE_STEP_KEYS now admits `continue-on-error`, so the masking assertion above "
         "cannot fail and is decorative."
     )
-    gated = {"name": "Type check", "run": "mypy"}
-    assert not set(gated) - GATE_STEP_KEYS, (
-        "a plain name+run step is refused by GATE_STEP_KEYS, so the assertion reds on the "
-        "correct shape too — it would have to be loosened until it matched nothing."
-    )
+    assert "continue-on-error" in _gate_defect(masked)
+    missing = {"name": "Type check", "run": "mypy"}
+    assert "not the reuse hit guard" in _gate_defect(missing)
+    other = {"name": "Type check", "run": "mypy", "if": "false"}
+    assert "not the reuse hit guard" in _gate_defect(other)
+    early = {"name": "Type check", "run": "exit 0\nmypy", "if": REQUIRED_IF}
+    assert _gate_defect(early) == "early return inside run"
+    good = {"name": "Type check", "run": "mypy", "if": REQUIRED_IF}
+    assert _gate_defect(good) == ""

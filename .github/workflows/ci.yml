@@ -173,6 +173,7 @@ jobs:
       # own re-resolve. `==` is also a stronger guarantee than the range a lock entry would
       # carry. Bumping it is a one-line decision somebody makes on purpose.
       - name: Install mypy (pinned)
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: uv pip install --system "mypy==2.3.1"
 
       # 🚨 SHAPE ONLY. A type checker sees signatures and return types. It does NOT see
@@ -186,6 +187,7 @@ jobs:
       # No path argument: the file set is declared once, in pyproject.toml's `files = ["scripts"]`,
       # so this command and a local `mypy` cannot disagree about what is checked (AC4).
       - name: Type check (scripts/ — shape only, never behaviour)
+        if: success() && steps.reuse.outputs.hit != 'true'
         run: mypy
 
       # core#876. Seventeen controls over the staging SHA attribution scripts, thirteen of

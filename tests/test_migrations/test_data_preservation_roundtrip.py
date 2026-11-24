@@ -166,13 +166,10 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
     ids["users"] = user = _insert(
         conn,
         "users",
-        email="preservation@qa.example.com",
         password_hash="$2b$12$qapreservationprobehash",
-        full_name="Preservation Probe",
         is_active=True,
         email_verified=True,
         oauth_provider="google",
-        oauth_provider_id="g-preservation-1",
         created_at=_ts(next(n)),
         updated_at=_ts(next(n)),
         onboarding_checklist_dismissed_at=_ts(next(n)),
@@ -433,15 +430,11 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         conn,
         "invitations",
         org_id=org,
-        email="invited-preservation@qa.example.com",
         role="editor",
         invited_by_user_id=user,
-        token=_INVITE_TOKEN,
-        # Release N dual-writes both, so seeding only `token` would let the re-upgrade's
-        # `WHERE token_hash IS NULL` backfill turn a NULL into a value and read as data
-        # loss. Computed rather than pasted, so it stays correct if the token changes —
-        # and it is the assertion that the migration's
-        # `encode(sha256(convert_to(token,'UTF8')),'hex')` agrees with Python's hashlib.
+        # The plaintext token column stays in the database and is unmapped. The
+        # hash is what a lookup matches, and it is seeded directly so a round
+        # trip has a value to carry. The token column itself stays NULL.
         token_hash=hashlib.sha256(_INVITE_TOKEN.encode("utf-8")).hexdigest(),
         status="pending",
         expires_at=_ts(next(n)),
@@ -466,12 +459,11 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         "notification_channels",
         name="QA preservation channel",
         channel_type="email",
-        # `email`, not `to`: that is the key `notification_state._build_config` writes and
-        # `notification_service.notify` reads, and it is what release N's backfill into
-        # `notification_channel_pii` selects. The old fixture value matched neither, so
-        # the sidecar's row would have vanished on a round trip for a reason that had
-        # nothing to do with the migration.
-        config=json.dumps({"email": _CHANNEL_RECIPIENT}),
+        # Head strips the ``email`` key out of ``config``. Seeding it here would make
+        # the re-upgrade rewrite this row and report data loss for a deletion the
+        # contract migration performs on purpose. The address lives on the sidecar,
+        # seeded below. Same trade as ``overage_run_price_cents`` above.
+        config=json.dumps({}),
         events=json.dumps(["run_failed"]),
         is_active=True,
         org_id=org,
@@ -544,14 +536,13 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
     # These carry the values the erasure feature has to be able to delete, so a
     # round-trip that silently dropped one is exactly the failure that matters.
     #
-    # ⚠️ Seeded **identical** to the legacy columns they mirror, and that is deliberate
-    # rather than lazy: release N dual-writes, so "identical" is what production looks
-    # like, and the re-upgrade's backfill legitimately reconstructs these three from the
-    # legacy columns. Seeding them differently would guarantee a red for a reconstruction
-    # that is correct. The two fields that genuinely have **no** legacy source —
-    # `pending_email` here and every row of `email_change_requests` below — are what the
-    # migration's rollback stashes exist for, and they are the half of this fixture that
-    # can actually fail.
+    # The legacy address columns stay in the database and are unmapped, so
+    # these sidecar rows are the copy the application reads. This head's
+    # downgrade restores the email key on an email channel's config from
+    # notification_channel_pii. It does not rebuild the user or invitation
+    # columns. `pending_email` and `email_change_requests` still have no
+    # column to come back from; release N's stashes cover that half, and
+    # this fixture is what would go red if a later downgrade lost them.
     #
     # The PK is the FK on all three sidecars, hence `_pk=`.
     ids["user_pii"] = _insert(

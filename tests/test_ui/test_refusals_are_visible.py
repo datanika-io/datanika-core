@@ -110,10 +110,15 @@ def _caller(auth_stand_in):
 
 
 def _signed_in(auth_svc, u, org, role, *, access_minutes=10):
+    from sqlalchemy.orm import object_session
+
+    from datanika.models.pii import UserPII
+
+    pii = object_session(u).get(UserPII, u.id)
     return _auth_stand_in(
         access_token=auth_svc.create_access_token(u.id, org.id, expires_minutes=access_minutes),
         refresh_token=auth_svc.create_refresh_token(u.id),
-        current_user=UserInfo(id=u.id, email=u.email or "", full_name=u.full_name or ""),
+        current_user=UserInfo(id=u.id, email=pii.email, full_name=pii.full_name),
         current_org=OrgInfo(id=org.id, name=org.name, slug=org.slug),
         current_role=role,
     )

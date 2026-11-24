@@ -61,10 +61,8 @@ class TestCreateInvitation:
         assert inv.id is not None
         invited = db_session.get(InvitationPII, inv.id)
         assert invited is not None and invited.email == "newuser@test.com"
-        assert inv.email is None
         assert inv.role == MemberRole.EDITOR
         assert inv.status == InvitationStatus.PENDING
-        assert inv.token is None
         assert inv.plaintext_token
         assert inv.org_id == org.id
         assert inv.invited_by_user_id == owner.id
@@ -166,31 +164,15 @@ class TestAlreadyMemberGuardDoesNotRestOnTheIdentityLookup:
     @staticmethod
     def _email_less_member(session, org, email: str) -> User:
         """The MIRROR of ``_sidecar_less_member``: the address lives **only** in
-        ``user_pii``, and ``users.email`` is ``NULL``.
+        ``user_pii``. Release N+2 dropped ``users.email``, so there is no second
+        column to clear.
 
-        This is the shape N+1 leaves behind once ``users.email`` stops being
-        written, and it is constructible today — ``User.email`` is
-        ``Mapped[str | None]``, ``nullable=True`` (``models/user.py:44``).
-
-        🔑 **Built through ``make_user`` and then cleared**, rather than by writing a
-        ``UserPII`` row by hand. The hand-written version works and is what I wrote
-        first — ``test_pii_fixture_invariant.py::
-        test_the_factory_module_is_the_only_place_that_writes_the_sidecars`` caught
-        it, correctly: §8a.7 wants N+2's column drop to be **one** edit in
-        ``tests/factories.py``, and a second module growing its own sidecar write
-        undoes that. Satisfying it by widening ``ALLOWED`` would have been worse
-        still — that list is meant to reach **zero** at N+1, and this file's entry
-        is about building a sidecar-*less* row, which is the opposite of this.
+        Built through ``make_user``, which writes the sidecar. A hand-written
+        ``UserPII`` row is what ``test_pii_fixture_invariant.py`` refuses.
         """
         user = make_user(session, email=email, full_name="Sidecar only", password_hash="hashed")
-        user.email = None  # N+1's shape: the address survives only in `user_pii`.
         session.add(Membership(user_id=user.id, org_id=org.id, role=MemberRole.VIEWER))
         session.flush()
-        if user.email is not None:
-            raise RuntimeError(
-                "precondition failed: users.email is set, so the legacy half of the "
-                "guard's or_ can answer this and nothing below is a measurement"
-            )
         if session.get(UserPII, user.id) is None:
             raise RuntimeError(
                 "precondition failed: no user_pii row, so this is the sidecar-LESS "

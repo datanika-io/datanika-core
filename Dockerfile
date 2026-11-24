@@ -76,7 +76,7 @@ ARG DATANIKA_IMAGE_EDITION=cloud
 #
 # Pinned 2026-11-09 to the 2026-11-05 upstream build, 3.12.16-slim-trixie.
 # The previous pin was 3.12.14-slim-trixie. Both are debian:trixie-slim.
-# Re-checked 2026-11-16: `docker buildx imagetools inspect python:3.12-slim` still
+# Re-checked 2026-11-24: `docker buildx imagetools inspect python:3.12-slim` still
 # reports this index digest. A digest edit would name the same parent and leave
 # the package step cached (core#1313). The refresh is APT_REFRESHED_ON.
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS base
@@ -84,9 +84,15 @@ FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb
 # The package layer's refresh date (see HOW TO REFRESH above). Declared directly before the RUN
 # it invalidates and printed by it, so a reorder cannot quietly detach the two
 # (tests/test_deploy/test_base_image_freshness.py).
-# 2026-11-16: trixie-security has libpq 17.12-0+deb13u1 and linux 6.12.117-1.
+# 2026-11-24: apt-get upgrade on this pin installed base-files 13.8+deb13u8,
+# libc6 and libc-bin 2.41-12+deb13u5, openssl, openssl-provider-legacy and
+# libssl3t64 3.5.9-1~deb13u1, and zlib1g 1:1.3.dfsg+really1.3.1-1+deb13u1.
+# linux-libc-dev and libgssapi-krb5-2 are not in the base image. The install
+# in this step resolved linux-libc-dev 6.12.118-1 and libgssapi-krb5-2
+# 1.21.3-5+deb13u2. libpq5 and libpq-dev stayed 17.12-0+deb13u1. Nothing was
+# kept back.
 # Run 43876329693 served this step from cache at APT_REFRESHED_ON=2026-11-09.
-ARG APT_REFRESHED_ON=2026-11-16
+ARG APT_REFRESHED_ON=2026-11-24
 
 # System deps for psycopg2, bcrypt, cryptography, and xmlsec/lxml (SAML).
 # libxml2-dev/libxslt1-dev/libxmlsec1-dev/pkg-config + zlib1g-dev/libssl-dev let

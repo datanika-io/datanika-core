@@ -111,8 +111,6 @@ def test_every_seeded_user_has_a_matching_pii_sidecar(db_session):
         pii = db_session.get(UserPII, u.id)
         assert pii.email in expected, f"sidecar address is not a fixture address for user {u.id}"
         assert pii.full_name, f"sidecar name is empty for user {u.id}"
-        assert u.email is None
-        assert u.full_name is None
         expected.remove(pii.email)
     assert expected == set()
 

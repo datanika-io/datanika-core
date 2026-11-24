@@ -265,7 +265,6 @@ class TestSetPasswordForOAuthOnlyAccount:
         from datanika.models.pii import UserPII
 
         assert u.oauth_provider == "google"
-        assert u.oauth_provider_id is None
         assert db_session.get(UserPII, u.id).oauth_provider_id == "g-1"
 
 

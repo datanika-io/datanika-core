@@ -210,7 +210,7 @@ class TestDeployedCodeSurvivesTheNewSchema:
             "is probably not matching the current model style, which would make "
             "every check below vacuously green"
         )
-        for table, column in (("users", "email"), ("api_keys", "key_hash")):
+        for table, column in (("users", "password_hash"), ("api_keys", "key_hash")):
             assert column in deployed.get(table, {}), (
                 f"expected {table}.{column} in the parsed deployed schema; "
                 f"got {sorted(deployed.get(table, {}))}"

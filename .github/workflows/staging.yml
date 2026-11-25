@@ -522,11 +522,12 @@ jobs:
       # measures the `--list`, not the run.
       #
       # `always()`: a genuinely red run can also carry flaky specs, and the report
-      # deserves reading either way. The detector never fails the job itself —
-      # the gate's verdict is deliberately left unchanged until core#753 stops
-      # staging injecting infrastructure noise (hardening the gate while false
-      # reds are being injected would punish honest specs, which is the failure
-      # the tier policy exists to prevent).
+      # deserves reading either way. The detector exits 0. Its outputs have to be
+      # written, and a non-zero here would mark the job failed before the
+      # classifier runs — which, without a `flaky` branch, labels the run
+      # `infra_only` (a pass for the promotion reader). The classifier exits 1
+      # when status is `flaky` (core#1714). An `::error::` annotation does not
+      # fail the step by itself.
       - name: Detect flaky gating specs
         id: flaky_gate
         if: always()
@@ -796,6 +797,10 @@ jobs:
           # It also catches the emptier, more dangerous case: a report with no tests and a
           # step that PASSED (`{"files":[],"stats":{"total":0,"ok":true}}`, the de00365
           # shape) is not `clean` either. Only `clean` is a green -- detect_flaky_gating.py.
+          # core#1714: `flaky` sits AFTER `gating_failed` (a spec that stayed red keeps
+          # that name) and BEFORE the success split (`infra_only` is a pass). Playwright
+          # exits 0 on a failed-then-passed gating spec, so this branch is what fails
+          # the job. `::error::` alone does not.
           if [ "$JOB_STATUS" = "cancelled" ] || [ "$GATING_OUTCOME" = "cancelled" ]; then
             STATE=cancelled
           elif [ "$ATTRIB_OUTCOME" = "failure" ]; then
@@ -804,6 +809,8 @@ jobs:
             STATE=no_verdict
           elif [ "$GATING_OUTCOME" = "failure" ]; then
             STATE=gating_failed
+          elif [ "$FLAKY_STATUS" = "flaky" ]; then
+            STATE=flaky
           elif [ "$GATING_OUTCOME" = "success" ]; then
             if [ "$JOB_STATUS" = "success" ]; then STATE=clean; else STATE=infra_only; fi
           else
@@ -822,6 +829,9 @@ jobs:
               echo "::error::e2e-staging REFUSED to run: staging was not running this commit (core#876). This is NOT an E2E failure and NOT a broken harness — the specs were never started, so this commit still has no reading. Re-run this commit's deploy, then re-run this job. Do NOT re-deploy from inside a verifier (core#753)." ;;
             cancelled)
               echo "::notice::Job cancelled (staging-deploy concurrency group). A cancelled verdict is neither green nor red — the next push on dev produces the reading." ;;
+            flaky)
+              echo "::error::A GATING spec failed and passed on retry. QA_RULES.md §12: a retry around an assertion hides a product bug. This job must not stay green."
+              exit 1 ;;
             clean)
               echo "::notice::Gating E2E specs passed and the job is green." ;;
           esac
@@ -952,6 +962,7 @@ jobs:
             clean)         STATE="The run is GREEN." ;;
             infra_only)    STATE="The gating specs PASSED; the run is red for a NON-TEST reason (core#873)." ;;
             gating_failed) STATE="The run is RED and a gating spec ALSO retried into a pass — two findings, not one." ;;
+            flaky)         STATE="The run is RED. A gating spec failed and passed on retry." ;;
             cancelled)     STATE="The run was CANCELLED, so its verdict is neither green nor red." ;;
             *)             STATE="Run state: ${VERDICT:-unknown}." ;;
           esac
@@ -979,6 +990,7 @@ jobs:
             clean)         STATE="**The run is GREEN.**" ;;
             infra_only)    STATE="**The gating specs PASSED. The run is red for a NON-TEST reason (core#873), not for this.**" ;;
             gating_failed) STATE="**The run is RED on the gating tier AND a gating spec retried into a pass. Two findings, not one.**" ;;
+            flaky)         STATE="**The run is RED.** A gating spec failed and passed on retry." ;;
             cancelled)     STATE="**The run was CANCELLED** — its verdict is neither green nor red." ;;
             *)             STATE="**Run state: ${VERDICT:-unknown}.**" ;;
           esac
@@ -1014,7 +1026,7 @@ jobs:
           else
             gh issue create \
               --repo ${{ github.repository }} \
-              --title "[QA] e2e-staging GATING spec flaky (green run) on $SHORT_SHA" \
+              --title "[QA] e2e-staging GATING spec flaky on $SHORT_SHA" \
               --body "$body" \
               --label "e2e-staging-failure" \
               --label "e2e-failure"

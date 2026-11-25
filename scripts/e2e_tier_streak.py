@@ -166,7 +166,9 @@ INFORMATIONAL_VERDICTS: dict[str, str] = {
 }
 
 #: `staging.yml`, `e2e-staging`, step "Classify what this job's result means" — the **GATING**
-#: tier. Identical to the SSO vocabulary except that a spec failure is spelled `gating_failed`.
+#: tier. A spec failure is spelled `gating_failed`. A failed-then-passed gating spec is
+#: `flaky` and is a failure (core#1714): Playwright exited 0, so the classifier exits 1.
+#: `infra_only` stays a pass; `flaky` must not be absorbed into it.
 #:
 #: 🚨 This map did not exist until core#1205, and its absence was not a gap in coverage — it was
 #: a WRONG ANSWER. `parse_verdict_line` tried the SSO and informational patterns in turn and
@@ -179,6 +181,7 @@ GATING_VERDICTS: dict[str, str] = {
     "clean": PASS,
     "infra_only": PASS,
     "gating_failed": FAIL,
+    "flaky": FAIL,
     "wrong_build": UNMEASURED,
     "no_verdict": UNMEASURED,
     "cancelled": UNMEASURED,

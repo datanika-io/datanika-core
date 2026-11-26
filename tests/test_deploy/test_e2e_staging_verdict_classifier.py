@@ -75,7 +75,7 @@ def classifier_script() -> str:
     )
 
 
-def classify(
+def run_classifier(
     script: str,
     tmp_path: Path,
     *,
@@ -83,11 +83,12 @@ def classify(
     gating: str = "success",
     attribution: str = "success",
     flaky_status: str = "clean",
-) -> str:
-    """Run the classifier and return the `state=` it wrote to $GITHUB_OUTPUT.
+) -> tuple[str, int]:
+    """Run the classifier. Return `(state, returncode)`.
 
     Env is inherited, not replaced: on Windows a bare env strips PATH and SystemRoot and the
-    subprocess dies for a reason that has nothing to do with the assertion.
+    subprocess dies for a reason that has nothing to do with the assertion. The return code is
+    part of the result: an `::error::` annotation does not fail a GitHub step.
     """
     out_file = tmp_path / "gh_output"
     out_file.write_text("", encoding="utf-8")
@@ -112,7 +113,28 @@ def classify(
         f"--- $GITHUB_OUTPUT ---\n{written}\n--- stdout ---\n{proc.stdout}\n"
         f"--- stderr ---\n{proc.stderr}"
     )
-    return m.group(1)
+    return m.group(1), proc.returncode
+
+
+def classify(
+    script: str,
+    tmp_path: Path,
+    *,
+    job_status: str = "success",
+    gating: str = "success",
+    attribution: str = "success",
+    flaky_status: str = "clean",
+) -> str:
+    """Return only the `state=` token. Callers that must see the exit code use `run_classifier`."""
+    state, _rc = run_classifier(
+        script,
+        tmp_path,
+        job_status=job_status,
+        gating=gating,
+        attribution=attribution,
+        flaky_status=flaky_status,
+    )
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -207,23 +229,65 @@ def test_a_cancelled_run_is_still_cancelled(classifier_script, tmp_path):
 
 
 def test_a_clean_run_is_still_clean(classifier_script, tmp_path):
-    """The acceptance control. Without this, 'never say clean' passes everything above."""
-    state = classify(
+    """The acceptance control. Without this, 'never say clean' passes everything above.
+
+    The exit code is the control for a blanket `exit 1`: that would turn a real green into a
+    red job and still satisfy a test that only reads `state=`.
+    """
+    state, rc = run_classifier(
         classifier_script, tmp_path, job_status="success", gating="success", flaky_status="clean"
     )
     assert state == "clean", f"classified {state!r}; a normal green run must still be `clean`."
+    assert rc == 0, f"a clean run exited {rc}; only a flaky gating report fails this step."
 
 
-def test_a_flaky_but_passing_run_is_still_clean(classifier_script, tmp_path):
-    """The detector deliberately does not change the gate's verdict (core#757) -- it alerts
-    and files separately. Consulting its status must not accidentally start gating on it."""
-    state = classify(
+def test_a_flaky_gating_report_fails_the_job(classifier_script, tmp_path):
+    """Playwright exits 0 when a gating spec fails and then passes on retry.
+
+    Run 45478107588 on 6e5bbb5 classified that shape `clean` and the job exited 0.
+    QA_RULES §12: a retry around an assertion hides a product bug. The state must be
+    `flaky` and this step must exit non-zero, or the job stays green (core#1714).
+    """
+    state, rc = run_classifier(
         classifier_script, tmp_path, job_status="success", gating="success", flaky_status="flaky"
     )
-    assert state == "clean", (
-        f"classified {state!r}. core#757 leaves the gate's pass/fail unchanged until core#753; "
-        "reading `status` for the no-evidence case must not turn `flaky` into a gate."
+    assert state == "flaky", (
+        f"classified {state!r}. A gating spec that failed and then passed is not a green."
     )
+    assert rc != 0, (
+        f"state={state!r} but the classifier exited {rc}. "
+        "An ::error:: annotation does not fail the job; the step has to exit non-zero."
+    )
+
+
+def test_a_real_spec_failure_outranks_a_flaky_report(classifier_script, tmp_path):
+    """A spec that stayed red is `gating_failed`, even when the report also names a flake."""
+    state, rc = run_classifier(
+        classifier_script,
+        tmp_path,
+        job_status="failure",
+        gating="failure",
+        flaky_status="flaky",
+    )
+    assert state == "gating_failed", (
+        f"classified {state!r}. A spec that stayed red must keep holding the promotion as "
+        "`gating_failed`."
+    )
+    assert rc == 0, (
+        f"the classifier exited {rc}. The gating step already failed the job; this step "
+        "labels that red."
+    )
+
+
+def test_a_flaky_report_is_not_infra_only(classifier_script, tmp_path):
+    """`infra_only` is a pass for the promotion reader. A flaky gating spec is not one."""
+    state, rc = run_classifier(
+        classifier_script, tmp_path, job_status="failure", gating="success", flaky_status="flaky"
+    )
+    assert state == "flaky", (
+        f"classified {state!r}; a flaky gating spec must not read as infra_only."
+    )
+    assert rc != 0, f"classifier exited {rc} on a flaky gating report."
 
 
 def test_a_green_specs_step_in_a_red_job_is_still_infra_only(classifier_script, tmp_path):

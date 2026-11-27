@@ -5,6 +5,7 @@ import reflex as rx
 from datanika.config import settings as _settings
 from datanika.logging_config import setup_logging
 from datanika.plugin_registry import plugin_head_components
+from datanika.session_inherit import install_session_inherit
 from datanika.ui.pages.audit_logs import audit_logs_page
 from datanika.ui.pages.auth_complete import auth_complete_page
 from datanika.ui.pages.confirm_email_change import confirm_email_change_page
@@ -96,6 +97,13 @@ if _settings.datanika_edition == "cloud":
     from datanika_cloud.plugin import init_cloud  # noqa: E402
 
     init_cloud(app)
+
+# A full page load opens its socket while the previous socket is still
+# registered. Reflex mints a new client token for that collision and leaves
+# the token empty. The session lives only on the token, so the new page is
+# signed out and load_connections returns without rows (core#1714). Copy the
+# session onto the minted token before the client is told the token changed.
+install_session_inherit(app)
 
 # core#648 — APScheduler is NOT armed here.
 #
